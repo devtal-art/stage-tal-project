@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// Same-origin /api in production (Vercel routes /api/* to the server service);
+// local Vite dev talks to the Express server on :5000.
+const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:5000/api' : '/api');
 const API_URL = `${API_BASE}/projects`;
 
 // Parses the file and returns a preview (valid + invalid rows, duplicate

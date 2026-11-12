@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const UPLOAD_DIR = require('../utils/uploadDir');
 const projectController = require('../controllers/project.controller');
 
 // Multer config for the Projects upload - a single Excel/CSV file per request,
 // independent of the Attendance upload config in api.routes.js.
 const upload = multer({
-  dest: 'uploads/',
+  dest: UPLOAD_DIR,
   fileFilter: (req, file, cb) => {
     if (!/\.(xlsx|xls|csv)$/i.test(file.originalname)) {
       return cb(new Error('Only .xlsx, .xls and .csv files are supported.'));

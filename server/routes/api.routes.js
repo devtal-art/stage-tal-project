@@ -5,7 +5,8 @@ const uploadController = require('../controllers/upload.controller');
 const reportController = require('../controllers/report.controller');
 
 // Multer config for file upload - accepts up to 20 files per request
-const upload = multer({ dest: 'uploads/' });
+const UPLOAD_DIR = require('../utils/uploadDir');
+const upload = multer({ dest: UPLOAD_DIR });
 const MAX_FILES = 20;
 
 const handleUpload = (req, res, next) => {
