@@ -66,6 +66,10 @@ app.get('/api/health', (req, res) => {
     db: dbStates[mongoose.connection.readyState] || 'unknown',
     mongoUriSet: Boolean(mongoUri),
     dbError: lastDbError,
+    // Diagnostics: env var NAMES only (never values) + which deployment runs.
+    mongoEnvNames: Object.keys(process.env).filter((k) => /mongo/i.test(k)),
+    vercelEnv: process.env.VERCEL_ENV || null,
+    commit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7) || null,
     timestamp: new Date().toISOString(),
   });
 });
