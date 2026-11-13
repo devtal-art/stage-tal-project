@@ -13,11 +13,50 @@ export const FILTER_FIELDS = [
   { id: 'brand', label: 'Brand' },
   { id: 'category', label: 'Category' },
   { id: 'department', label: 'Department' },
-  { id: 'status', label: 'Status' },
+  { id: 'status', label: 'Status (chips)' },
   { id: 'frequency', label: 'Frequency' },
 ];
 
 export const VIEW_SECTIONS = {
+  // The Projects page (grouped list + All items table). Ids are prefixed per
+  // section so the same field can be toggled separately in each place.
+  list: [
+    {
+      title: 'Group row columns',
+      items: [
+        { id: 'g_name', label: 'Name', locked: true },
+        { id: 'g_category', label: 'Category (Projects / Brand)' },
+        { id: 'g_period', label: 'Active period' },
+        { id: 'g_progress', label: 'Progress' },
+        { id: 'g_frequency', label: 'Frequency' },
+        { id: 'g_items', label: 'Items' },
+      ],
+    },
+    {
+      title: 'Work item columns',
+      items: [
+        { id: 'i_week', label: 'Week' },
+        { id: 'i_task', label: 'Task', locked: true },
+        { id: 'i_detail', label: 'Category / Brand' },
+        { id: 'i_dept', label: 'Department' },
+        { id: 'i_month', label: 'Month' },
+        { id: 'i_status', label: 'Status' },
+        { id: 'i_link', label: 'Link' },
+      ],
+    },
+    {
+      title: 'All items table columns',
+      items: [
+        { id: 't_task', label: 'Project', locked: true },
+        { id: 't_brand', label: 'Brand' },
+        { id: 't_category', label: 'Category' },
+        { id: 't_when', label: 'When' },
+        { id: 't_status', label: 'Status' },
+        { id: 't_dept', label: 'Department' },
+        { id: 't_link', label: 'Link' },
+      ],
+    },
+  ],
   table: [
     {
       title: 'Table columns',

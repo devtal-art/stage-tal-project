@@ -52,7 +52,9 @@ export const DEFAULT_FILTERS = {
 export const validateProjectFilters = (filters) => ({
   ...filters,
   quarter: filters.quarter === 'All' || QUARTERS.includes(filters.quarter) ? filters.quarter : 'All',
-  status: filters.status === 'All' || STATUSES.includes(filters.status) ? filters.status : 'All',
+  // NO_STATUS_LABEL = records saved without a status (the Projects page's
+  // "No status" chip).
+  status: filters.status === 'All' || filters.status === NO_STATUS_LABEL || STATUSES.includes(filters.status) ? filters.status : 'All',
   // Only where the filter exists (the Projects list); other pages' states
   // carry no frequency key and are left that way.
   ...(filters.frequency === undefined ? {} : {
@@ -86,11 +88,11 @@ export const filterRecords = (records, filters) => {
     if (!matches(r.brand, filters.brand)) return false;
     if (!matches(r.category, filters.category)) return false;
     if (!matches(r.department, filters.department)) return false;
-    if (!matches(r.status ?? '', filters.status)) return false;
+    if (filters.status === NO_STATUS_LABEL ? Boolean(r.status) : !matches(r.status ?? '', filters.status)) return false;
     // Pages without a Frequency filter (the dashboard) carry no frequency key.
     if (filters.frequency != null && !matches(r.frequency ?? '', filters.frequency)) return false;
     if (search) {
-      const haystack = `${r.taskName ?? ''} ${r.brand ?? ''} ${r.category ?? ''} ${r.department ?? ''}`.toLowerCase();
+      const haystack = `${r.taskName ?? ''} ${r.brand ?? ''} ${r.category ?? ''} ${r.department ?? ''} ${r.description ?? ''}`.toLowerCase();
       if (!haystack.includes(search)) return false;
     }
     return true;
