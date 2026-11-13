@@ -1,4 +1,4 @@
-import { monthIndex } from './constants';
+import { MONTHS, monthIndex, STATUSES, QUARTERS, getQuarter, FREQUENCIES, NO_STATUS_LABEL } from './constants';
 
 // Inverse of the server parser's Links-cell format (one "Label: https://..."
 // pair per line) - used by the Export button so a re-uploaded export round
@@ -33,11 +33,32 @@ export const computeSummaryCounts = (records) => ({
 export const DEFAULT_FILTERS = {
   search: '',
   year: 'All',
+  quarter: 'All',
   month: 'All',
+  week: 'All',
   brand: 'All',
   category: 'All',
   department: 'All',
+  status: 'All',
+  frequency: 'All',
 };
+
+// Repairs the filters read from a shared/hand-edited URL (see
+// lib/useUrlFilters.js). Quarter and Status are fixed lists, so an
+// unrecognized value is reset to "All" here; the data-dependent filters
+// (year/month/brand/category/department) are repaired by sanitizeFilters
+// below once the project data has loaded. Any extra keys on the object
+// (e.g. the Projects list's `view`) pass through untouched.
+export const validateProjectFilters = (filters) => ({
+  ...filters,
+  quarter: filters.quarter === 'All' || QUARTERS.includes(filters.quarter) ? filters.quarter : 'All',
+  status: filters.status === 'All' || STATUSES.includes(filters.status) ? filters.status : 'All',
+  // Only where the filter exists (the Projects list); other pages' states
+  // carry no frequency key and are left that way.
+  ...(filters.frequency === undefined ? {} : {
+    frequency: filters.frequency === 'All' || FREQUENCIES.includes(filters.frequency) ? filters.frequency : 'All',
+  }),
+});
 
 // Single source of truth for "does this record match this filter value" -
 // used by both the flat filterRecords below and the cascading filter option
@@ -45,14 +66,29 @@ export const DEFAULT_FILTERS = {
 const matches = (value, filterValue) =>
   filterValue === 'All' || filterValue == null || String(value) === String(filterValue);
 
+// A record's week number as the Week filter sees it: the sheet's Week No.
+// trimmed ("" when blank). Week options are the distinct non-blank ones,
+// ordered numerically (2 before 10).
+const weekOf = (record) => String(record.weekNo ?? '').trim();
+const getWeeks = (records) =>
+  Array.from(new Set(records.map(weekOf).filter(Boolean))).sort(
+    (a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0) || a.localeCompare(b, undefined, { numeric: true }),
+  );
+
 export const filterRecords = (records, filters) => {
   const search = (filters.search || '').trim().toLowerCase();
   return records.filter((r) => {
     if (!matches(r.year, filters.year)) return false;
+    if (!matches(getQuarter(r.month), filters.quarter)) return false;
     if (!matches(r.month, filters.month)) return false;
+    // Pages without a Week filter (the dashboard) carry no week key.
+    if (filters.week != null && !matches(weekOf(r), filters.week)) return false;
     if (!matches(r.brand, filters.brand)) return false;
     if (!matches(r.category, filters.category)) return false;
     if (!matches(r.department, filters.department)) return false;
+    if (!matches(r.status ?? '', filters.status)) return false;
+    // Pages without a Frequency filter (the dashboard) carry no frequency key.
+    if (filters.frequency != null && !matches(r.frequency ?? '', filters.frequency)) return false;
     if (search) {
       const haystack = `${r.taskName ?? ''} ${r.brand ?? ''} ${r.category ?? ''} ${r.department ?? ''}`.toLowerCase();
       if (!haystack.includes(search)) return false;
@@ -66,7 +102,7 @@ export const filterRecords = (records, filters) => {
 // alongside each Project (see HierarchyTree) - but it still narrows/is
 // narrowed by every level below, via getCascadingFilterOptions.
 export const DEFAULT_HIERARCHY_LEVELS = ['year', 'month', 'brand', 'category'];
-const OPTION_KEY_FOR_FIELD = { year: 'years', month: 'months', brand: 'brands', category: 'categories' };
+const OPTION_KEY_FOR_FIELD = { year: 'years', month: 'months', week: 'weeks', brand: 'brands', category: 'categories' };
 
 // Each chain field's available options are derived only from its ancestors
 // in the Year -> Month -> Brand -> Category chain (e.g. Brand options only
@@ -75,15 +111,26 @@ const OPTION_KEY_FOR_FIELD = { year: 'years', month: 'months', brand: 'brands', 
 // itself. Department sits outside the chain but narrows, and is narrowed
 // by, the full chain, since it's a cross-cutting facet rather than a level.
 export const getCascadingFilterOptions = (records, filters) => {
-  const byDepartment = records.filter((r) => matches(r.department, filters.department));
+  // Quarter, like Department, sits outside the Year -> Month -> Brand ->
+  // Category chain but narrows every option below it, so e.g. Month only
+  // offers the months of the selected quarter and Year only offers years
+  // that actually have records in it.
+  const byDepartment = records.filter(
+    (r) => matches(r.department, filters.department) && matches(getQuarter(r.month), filters.quarter),
+  );
   const byYear = byDepartment.filter((r) => matches(r.year, filters.year));
   const byMonth = byYear.filter((r) => matches(r.month, filters.month));
-  const byBrand = byMonth.filter((r) => matches(r.brand, filters.brand));
+  // Week sits under Month in the chain: it offers the weeks of the chosen
+  // year/month, and narrows Brand/Category/Department below it.
+  const byWeek = byMonth.filter((r) => matches(weekOf(r), filters.week));
+  const byBrand = byWeek.filter((r) => matches(r.brand, filters.brand));
 
   const byChain = records.filter(
     (r) =>
+      matches(getQuarter(r.month), filters.quarter) &&
       matches(r.year, filters.year) &&
       matches(r.month, filters.month) &&
+      matches(weekOf(r), filters.week) &&
       matches(r.brand, filters.brand) &&
       matches(r.category, filters.category),
   );
@@ -91,9 +138,18 @@ export const getCascadingFilterOptions = (records, filters) => {
   return {
     years: getUniqueSorted(byDepartment, 'year'),
     months: getUniqueSorted(byYear, 'month'),
-    brands: getUniqueSorted(byMonth, 'brand'),
+    weeks: getWeeks(byMonth),
+    brands: getUniqueSorted(byWeek, 'brand'),
     categories: getUniqueSorted(byBrand, 'category'),
     departments: getUniqueSorted(byChain, 'department'),
+    // Status is a fixed list of six, not derived from the data, and a plain
+    // flat filter: it doesn't narrow the other dropdowns or get narrowed by
+    // them, so sanitizeFilters has nothing to repair for it.
+    statuses: STATUSES,
+    // Fixed four, always valid, so sanitizeFilters never has to repair it.
+    quarters: QUARTERS,
+    // Fixed five as well, and flat like Status.
+    frequencies: FREQUENCIES,
   };
 };
 
@@ -111,7 +167,12 @@ const isValidSelection = (options, value) => value === 'All' || options.some((o)
 export const sanitizeFilters = (records, filters) => {
   let next = filters;
 
-  DEFAULT_HIERARCHY_LEVELS.forEach((field) => {
+  // The hierarchy's chain plus Week right after Month (only where the page
+  // has a Week filter).
+  const chain = next.week === undefined
+    ? DEFAULT_HIERARCHY_LEVELS
+    : DEFAULT_HIERARCHY_LEVELS.flatMap((f) => (f === 'month' ? ['month', 'week'] : [f]));
+  chain.forEach((field) => {
     const options = getCascadingFilterOptions(records, next)[OPTION_KEY_FOR_FIELD[field]];
     if (!isValidSelection(options, next[field])) {
       next = { ...next, [field]: 'All' };
@@ -124,6 +185,153 @@ export const sanitizeFilters = (records, filters) => {
   }
 
   return next;
+};
+
+// Compact View ---------------------------------------------------------
+
+// A month as a single sortable number (year * 12 + month 0-11), so "the next
+// month" is always +1 even across a year boundary (Dec 2025 -> Jan 2026).
+// null when the year or month isn't recognizable - those records still count
+// and are still listed, they just can't be placed on the timeline.
+const periodOf = (record) => {
+  const year = Number(record.year);
+  const month = monthIndex(record.month);
+  return Number.isFinite(year) && month < MONTHS.length ? year * 12 + month : null;
+};
+
+const periodLabel = (period) => `${MONTHS[period % 12]} ${Math.floor(period / 12)}`;
+
+// Turns the distinct months a task appeared in (ascending period numbers)
+// into its frequency label. Each unbroken run of consecutive months becomes
+// "Jan 2026 - May 2026" (or just "Oct 2026" for a single month); runs
+// separated by a gap are joined with ", ", e.g.
+// "Jan 2026 - May 2026, Oct 2026" = every month Jan-May, nothing Jun-Sep,
+// then Oct.
+export const formatFrequency = (periods) => {
+  if (periods.length === 0) return '';
+  const runs = [];
+  let start = periods[0];
+  let prev = periods[0];
+  periods.slice(1).forEach((period) => {
+    if (period === prev + 1) {
+      prev = period;
+      return;
+    }
+    runs.push([start, prev]);
+    start = period;
+    prev = period;
+  });
+  runs.push([start, prev]);
+  return runs.map(([from, to]) => (from === to ? periodLabel(from) : `${periodLabel(from)} - ${periodLabel(to)}`)).join(', ');
+};
+
+// Same normalization the upload's duplicate check uses (trim + lowercase,
+// plus collapsing inner whitespace) so "LitW - BYM and LD" and
+// "litw - bym  and ld" are one task.
+const normalizePart = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+const taskKeyOf = (record) => [record.brand, record.category, record.taskName].map(normalizePart).join('|');
+
+const weekNumber = (record) => {
+  const n = parseInt(record.weekNo, 10);
+  return Number.isNaN(n) ? Infinity : n;
+};
+
+// Collapses the flat record list into one entry per task, where a task is
+// the same Brand + Category + Task Name (not Task Name alone: the same name
+// is reused across different brands/categories, and those are different
+// work). Department and Year are deliberately not part of the key - a task
+// can move between e.g. "Des" and "Des + Dev", and a recurring task spans
+// years; each occurrence keeps its own department/status/links.
+//
+// Per task: workCount = every record (a task can repeat several times,
+// even weekly, within one month); dateLabel/first/lastPeriod come from the
+// distinct months it appears in; occurrences are the records in
+// chronological order (month, then week no., then original order).
+export const buildCompactTasks = (records) => {
+  const groups = new Map();
+  records.forEach((record, index) => {
+    const key = taskKeyOf(record);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ record, index, period: periodOf(record) });
+  });
+
+  return Array.from(groups.entries()).map(([key, entries]) => {
+    const sorted = [...entries].sort(
+      (a, b) =>
+        (a.period ?? Infinity) - (b.period ?? Infinity) ||
+        weekNumber(a.record) - weekNumber(b.record) ||
+        a.index - b.index,
+    );
+    const periods = Array.from(new Set(sorted.map((e) => e.period).filter((p) => p !== null)));
+    const first = sorted[0].record;
+    return {
+      key,
+      taskName: first.taskName,
+      brand: first.brand,
+      category: first.category,
+      // Set per row by the sheet, so a task's rows can differ or be blank: every
+      // distinct value entered, most to least frequent (empty if none).
+      frequencies: Array.from(new Set(sorted.map((e) => e.record.frequency).filter(Boolean)))
+        .sort((a, b) => FREQUENCIES.indexOf(a) - FREQUENCIES.indexOf(b)),
+      workCount: sorted.length,
+      occurrences: sorted.map((e) => e.record),
+      dateLabel: formatFrequency(periods),
+      firstPeriod: periods.length ? periods[0] : null,
+      lastPeriod: periods.length ? periods[periods.length - 1] : null,
+    };
+  });
+};
+
+// Compact view "By Category" / "By Status": one entry per group of records,
+// where `field` is 'category' or 'status'. Categories use the same
+// normalization as tasks ("Brand Material" = "brand material"); a record with
+// no status goes under NO_STATUS_LABEL. Grouping is per record, not per task:
+// one task's occurrences can carry different statuses. Each group rolls up
+// its records' brands, date range, frequencies and count; `title` is what its
+// card shows, and `occurrences` (chronological: month, week no., project
+// name) is what the opened card lists. taskName/brand are the first ones,
+// used only for sorting.
+export const buildCompactGroups = (records, field) => {
+  const labelOf = (record) =>
+    field === 'status' ? record.status || NO_STATUS_LABEL : String(record[field] ?? '').trim();
+  const groups = new Map();
+  records.forEach((record, index) => {
+    const label = labelOf(record);
+    const key = normalizePart(label);
+    if (!groups.has(key)) groups.set(key, { label, entries: [] });
+    groups.get(key).entries.push({ record, index, period: periodOf(record) });
+  });
+
+  const byName = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+  return Array.from(groups.entries()).map(([key, { label, entries }]) => {
+    const sorted = [...entries].sort(
+      (a, b) =>
+        (a.period ?? Infinity) - (b.period ?? Infinity) ||
+        weekNumber(a.record) - weekNumber(b.record) ||
+        byName(a.record.taskName, b.record.taskName) ||
+        a.index - b.index,
+    );
+    const occurrences = sorted.map((e) => e.record);
+    const periods = Array.from(new Set(sorted.map((e) => e.period).filter((p) => p !== null)));
+    const brands = Array.from(new Set(occurrences.map((r) => r.brand).filter(Boolean))).sort(byName);
+    const taskNames = Array.from(new Set(occurrences.map((r) => r.taskName).filter(Boolean))).sort(byName);
+    return {
+      key: `${field}:${key}`,
+      title: label,
+      [field]: label,
+      occurrences,
+      taskName: taskNames[0] ?? '',
+      brands,
+      brand: brands[0] ?? '',
+      frequencies: Array.from(new Set(occurrences.map((r) => r.frequency).filter(Boolean)))
+        .sort((a, b) => FREQUENCIES.indexOf(a) - FREQUENCIES.indexOf(b)),
+      workCount: occurrences.length,
+      dateLabel: formatFrequency(periods),
+      firstPeriod: periods.length ? periods[0] : null,
+      lastPeriod: periods.length ? periods[periods.length - 1] : null,
+    };
+  });
 };
 
 const compareGroupKeys = (field, a, b) => {

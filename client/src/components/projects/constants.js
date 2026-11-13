@@ -5,6 +5,27 @@ export const monthIndex = (month) => {
   return idx === -1 ? MONTHS.length : idx;
 };
 
+// Calendar quarters, as the filter's fixed options (values 'Q1'-'Q4').
+export const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
+
+const QUARTER_LABELS = {
+  Q1: 'Quarter-1 (Jan-Feb-Mar)',
+  Q2: 'Quarter-2 (Apr-May-Jun)',
+  Q3: 'Quarter-3 (Jul-Aug-Sep)',
+  Q4: 'Quarter-4 (Oct-Nov-Dec)',
+};
+
+export const getQuarterLabel = (quarter) => QUARTER_LABELS[quarter] || quarter;
+
+// Quarter a month belongs to, resolved through monthIndex so it recognizes
+// exactly the same month spellings as month sorting does. A month that
+// isn't one of the twelve gets '' - it belongs to no quarter, so it only
+// shows under "All Quarters".
+export const getQuarter = (month) => {
+  const idx = monthIndex(month);
+  return idx === MONTHS.length ? '' : QUARTERS[Math.floor(idx / 3)];
+};
+
 const MONTH_FULL_NAMES = {
   Jan: 'January',
   Feb: 'February',
@@ -128,8 +149,67 @@ export const getDepartmentColor = (department) => {
   return getTagColor(department);
 };
 
+// The only six Status values a project can have (mirrors the server's
+// utils/projectStatuses.js - the upload parser rejects anything else), in the
+// order they're listed in the filter and chart. Each has a fixed color,
+// chosen to carry its meaning: green done, red cancelled, amber waiting,
+// violet under review, blue underway, gray not begun.
+export const STATUSES = ['Delivered', 'Cancelled', 'Hold', 'Review', 'In Progress', 'Not Started'];
+
+// The only values the sheet's Frequency column can set (mirrors the server's
+// projectFrequencies.js), most to least frequent.
+export const FREQUENCIES = ['Daily', 'Weekly', 'Monthly', 'Quarterly', 'Yearly', 'One-time'];
+
+const FREQUENCY_COLORS = {
+  Daily: '#d03b3b',
+  Weekly: '#eb6834',
+  Monthly: '#2a78d6',
+  Quarterly: '#4a3aa7',
+  Yearly: '#0ca30c',
+  'One-time': '#898781',
+};
+
+export const getFrequencyChipStyle = (frequency) => {
+  const color = FREQUENCY_COLORS[frequency] || UNKNOWN_TAG_COLOR;
+  return { backgroundColor: `${color}1f`, color };
+};
+
+export const NO_STATUS_LABEL = 'No Status';
+
+const STATUS_COLORS = {
+  Delivered: '#0ca30c',
+  Cancelled: '#d03b3b',
+  Hold: '#eda100',
+  Review: '#4a3aa7',
+  'In Progress': '#2a78d6',
+  'Not Started': '#898781',
+  [NO_STATUS_LABEL]: '#c3c2b7',
+};
+
+export const getStatusColor = (status) => STATUS_COLORS[status] || UNKNOWN_TAG_COLOR;
+
+export const getStatusChipStyle = (status) => {
+  const color = getStatusColor(status);
+  return { backgroundColor: `${color}1f`, color };
+};
+
+// Compact View's Work Count badge background, by how often a task repeated:
+// 10 or fewer = salmon, 11-20 = mild yellow, 21 or more = mild green. Text
+// stays the view's dark navy in every band, so only the fill changes.
+export const getWorkCountColor = (count) => {
+  if (count <= 10) return '#F7D6CF';
+  if (count <= 20) return '#FBF0B5';
+  return '#D3EDD6';
+};
+
 // Light tinted background + solid text, both derived from the same color, so
 // department chips read as a coherent color-coded set instead of flat gray.
+// A combined department ("Des,Dev", "Des + Dev", "Des & Dev", "Des/Dev") as
+// its separate parts, each shown as its own chip in the listings. Empty
+// parts and repeats are dropped; a single department comes back as [it].
+export const splitDepartments = (department) =>
+  Array.from(new Set(String(department ?? '').split(/\s*[,+&/]\s*/).map((d) => d.trim()).filter(Boolean)));
+
 export const getDepartmentChipStyle = (department) => {
   const color = getDepartmentColor(department);
   return { backgroundColor: `${color}1f`, color };

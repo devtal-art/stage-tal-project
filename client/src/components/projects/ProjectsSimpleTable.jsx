@@ -9,7 +9,8 @@ import {
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Button } from '../ui/button';
 import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown, FolderOpen } from 'lucide-react';
-import { getTagChipStyle, getDepartmentChipStyle, BRAND_CHIP_STYLE, monthIndex } from './constants';
+import DepartmentChips from './DepartmentChips';
+import { getTagChipStyle, getStatusChipStyle, getFrequencyChipStyle, BRAND_CHIP_STYLE, FREQUENCIES, monthIndex } from './constants';
 import ProjectLinks from './ProjectLinks';
 
 const PAGE_SIZE = 50;
@@ -22,10 +23,13 @@ const monthYearSortingFn = (rowA, rowB) => {
   return monthIndex(a.month) - monthIndex(b.month);
 };
 
-// A plain, literal table: one row per task, five columns (Category, Project
-// Name, Brand, Department, Month/Year) - no grouping, no merged cells, no
-// drill-down.
-export default function ProjectsSimpleTable({ records }) {
+// A plain, literal table: one row per task (Category, Project Name, Brand,
+// Department, Week No., Month/Year, Links, Status, Frequency) - no grouping, no merged
+// cells, no drill-down.
+// Relative width of each column; only the visible ones are used (see below).
+const COLUMN_WIDTHS = { category: 12, taskName: 24, brand: 12, department: 12, weekNo: 8, monthYear: 11, links: 7, status: 14, frequency: 11 };
+
+export default function ProjectsSimpleTable({ records, hiddenColumns = [], columnOrder = [] }) {
   const [sorting, setSorting] = useState([{ id: 'category', desc: false }]);
 
   const columns = useMemo(
@@ -61,9 +65,7 @@ export default function ProjectsSimpleTable({ records }) {
         header: 'Department',
         sortingFn: 'alphanumeric',
         cell: (info) => (
-          <span className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" style={getDepartmentChipStyle(info.getValue())}>
-            {info.getValue()}
-          </span>
+          <DepartmentChips department={info.getValue()} chipClassName="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" />
         ),
       },
       {
@@ -85,11 +87,49 @@ export default function ProjectsSimpleTable({ records }) {
         enableSorting: false,
         cell: ({ row }) => <ProjectLinks links={row.original.links} />,
       },
+      {
+        accessorKey: 'status',
+        header: 'Status',
+        sortingFn: 'alphanumeric',
+        // Projects saved before Status existed have none - shown as '-'
+        // like an empty Week No., not as an invented default status.
+        cell: (info) => {
+          const value = info.getValue();
+          if (!value) return <span className="text-sm text-gray-400">-</span>;
+          return (
+            <span className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" style={getStatusChipStyle(value)}>
+              {value}
+            </span>
+          );
+        },
+      },
+      {
+        accessorKey: 'frequency',
+        header: 'Frequency',
+        sortingFn: (a, b) => FREQUENCIES.indexOf(a.original.frequency) - FREQUENCIES.indexOf(b.original.frequency),
+        cell: (info) => {
+          const value = info.getValue();
+          if (!value) return <span className="text-sm text-gray-400">-</span>;
+          return (
+            <span className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" style={getFrequencyChipStyle(value)}>
+              {value}
+            </span>
+          );
+        },
+      },
     ],
     [],
   );
 
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
+
+  const columnVisibility = useMemo(
+    () => Object.fromEntries(hiddenColumns.map((id) => [id, false])),
+    [hiddenColumns],
+  );
+  // A sort on a column that's now hidden would reorder rows with no header
+  // showing why, so it's ignored until the column comes back.
+  const activeSorting = useMemo(() => sorting.filter((s) => !hiddenColumns.includes(s.id)), [sorting, hiddenColumns]);
 
   const table = useReactTable({
     data: records,
@@ -99,23 +139,21 @@ export default function ProjectsSimpleTable({ records }) {
     getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
     onPaginationChange: setPagination,
-    state: { sorting, pagination },
+    state: { sorting: activeSorting, pagination, columnVisibility, columnOrder },
   });
 
   const rows = table.getRowModel().rows;
+  const visibleColumns = table.getVisibleLeafColumns();
+  const widthTotal = visibleColumns.reduce((sum, c) => sum + (COLUMN_WIDTHS[c.id] || 10), 0);
 
   return (
     <div className="flex flex-col">
       <div className="min-h-[920px] overflow-auto rounded-lg border border-gray-200">
         <table className="w-full min-w-[640px] caption-bottom text-sm">
           <colgroup>
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '27%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '7%' }} />
+            {visibleColumns.map((c) => (
+              <col key={c.id} style={{ width: `${((COLUMN_WIDTHS[c.id] || 10) / widthTotal) * 100}%` }} />
+            ))}
           </colgroup>
           <TableHeader className="sticky top-0 z-20 bg-gray-50 shadow-sm">
             <TableRow>
@@ -156,7 +194,7 @@ export default function ProjectsSimpleTable({ records }) {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={7} className="h-48 text-center">
+                <TableCell colSpan={visibleColumns.length} className="h-48 text-center">
                   <div className="flex flex-col items-center justify-center gap-2 text-gray-400">
                     <FolderOpen className="w-8 h-8" />
                     <span className="text-sm">No projects match the current filters.</span>
