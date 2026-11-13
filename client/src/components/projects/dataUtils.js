@@ -1,4 +1,9 @@
-import { MONTHS, monthIndex, STATUSES, QUARTERS, getQuarter, FREQUENCIES, NO_STATUS_LABEL } from './constants';
+import { MONTHS, monthIndex, STATUSES, QUARTERS, getQuarter, FREQUENCIES, NO_STATUS_LABEL, normalizeDepartment } from './constants';
+
+// A record's department as every filter/option sees it: one canonical form,
+// so "Des,Dev" and "Dev + Des" are the same option, and "Des" matches only
+// Des-only rows (exact match, never "contains").
+export const departmentOf = (record) => normalizeDepartment(record.department);
 
 // Inverse of the server parser's Links-cell format (one "Label: https://..."
 // pair per line) - used by the Export button so a re-uploaded export round
@@ -23,10 +28,13 @@ export const getUniqueSorted = (records, field) => {
 
 export const computeSummaryCounts = (records) => ({
   tasks: records.length,
+  // Distinct projects (the saved taskName field is the project name), counted
+  // exactly like the Projects page groups them - similar names aren't merged.
+  projects: new Set(records.map((r) => String(r.taskName ?? '').trim()).filter(Boolean)).size,
   years: getUniqueSorted(records, 'year').length,
   brands: getUniqueSorted(records, 'brand').length,
   categories: getUniqueSorted(records, 'category').length,
-  departments: getUniqueSorted(records, 'department').length,
+  departments: new Set(records.map(departmentOf).filter(Boolean)).size,
   months: getUniqueSorted(records, 'month').length,
 });
 
@@ -55,6 +63,10 @@ export const validateProjectFilters = (filters) => ({
   // NO_STATUS_LABEL = records saved without a status (the Projects page's
   // "No status" chip).
   status: filters.status === 'All' || filters.status === NO_STATUS_LABEL || STATUSES.includes(filters.status) ? filters.status : 'All',
+  // Older links carry the sheet's spelling ("Des,Dev"); options are canonical.
+  ...(filters.department === undefined || filters.department === 'All' ? {} : {
+    department: normalizeDepartment(filters.department) || 'All',
+  }),
   // Only where the filter exists (the Projects list); other pages' states
   // carry no frequency key and are left that way.
   ...(filters.frequency === undefined ? {} : {
@@ -77,6 +89,15 @@ const getWeeks = (records) =>
     (a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0) || a.localeCompare(b, undefined, { numeric: true }),
   );
 
+const departmentsByFrequency = (records) => {
+  const counts = new Map();
+  records.forEach((r) => {
+    const d = departmentOf(r);
+    if (d) counts.set(d, (counts.get(d) || 0) + 1);
+  });
+  return Array.from(counts.keys()).sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
+};
+
 export const filterRecords = (records, filters) => {
   const search = (filters.search || '').trim().toLowerCase();
   return records.filter((r) => {
@@ -87,12 +108,13 @@ export const filterRecords = (records, filters) => {
     if (filters.week != null && !matches(weekOf(r), filters.week)) return false;
     if (!matches(r.brand, filters.brand)) return false;
     if (!matches(r.category, filters.category)) return false;
-    if (!matches(r.department, filters.department)) return false;
+    if (!matches(departmentOf(r), filters.department)) return false;
     if (filters.status === NO_STATUS_LABEL ? Boolean(r.status) : !matches(r.status ?? '', filters.status)) return false;
     // Pages without a Frequency filter (the dashboard) carry no frequency key.
     if (filters.frequency != null && !matches(r.frequency ?? '', filters.frequency)) return false;
     if (search) {
-      const haystack = `${r.taskName ?? ''} ${r.brand ?? ''} ${r.category ?? ''} ${r.department ?? ''} ${r.description ?? ''}`.toLowerCase();
+      // Project name, task, brand, category (and department).
+      const haystack = `${r.taskName ?? ''} ${r.description ?? ''} ${r.brand ?? ''} ${r.category ?? ''} ${departmentOf(r)}`.toLowerCase();
       if (!haystack.includes(search)) return false;
     }
     return true;
@@ -118,7 +140,7 @@ export const getCascadingFilterOptions = (records, filters) => {
   // offers the months of the selected quarter and Year only offers years
   // that actually have records in it.
   const byDepartment = records.filter(
-    (r) => matches(r.department, filters.department) && matches(getQuarter(r.month), filters.quarter),
+    (r) => matches(departmentOf(r), filters.department) && matches(getQuarter(r.month), filters.quarter),
   );
   const byYear = byDepartment.filter((r) => matches(r.year, filters.year));
   const byMonth = byYear.filter((r) => matches(r.month, filters.month));
@@ -143,7 +165,8 @@ export const getCascadingFilterOptions = (records, filters) => {
     weeks: getWeeks(byMonth),
     brands: getUniqueSorted(byWeek, 'brand'),
     categories: getUniqueSorted(byBrand, 'category'),
-    departments: getUniqueSorted(byChain, 'department'),
+    // Combined values included ("Des + Dev"), most used first.
+    departments: departmentsByFrequency(byChain),
     // Status is a fixed list of six, not derived from the data, and a plain
     // flat filter: it doesn't narrow the other dropdowns or get narrowed by
     // them, so sanitizeFilters has nothing to repair for it.

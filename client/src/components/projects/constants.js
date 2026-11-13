@@ -210,6 +210,16 @@ export const getWorkCountColor = (count) => {
 export const splitDepartments = (department) =>
   Array.from(new Set(String(department ?? '').split(/\s*[,+&/]\s*/).map((d) => d.trim()).filter(Boolean)));
 
+// One canonical spelling for a (combined) department: parts de-duplicated,
+// sorted A-Z and joined by " + ". "Des,Dev", "Dev + Des" -> "Des + Dev";
+// "Dev + Admin" -> "Admin + Dev". Mirrors server/utils/projectDepartments.js.
+// Saved records keep whatever the sheet said; this is applied wherever a
+// department is shown, filtered or grouped.
+export const normalizeDepartment = (department) =>
+  splitDepartments(department)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .join(' + ');
+
 export const getDepartmentChipStyle = (department) => {
   const color = getDepartmentColor(department);
   return { backgroundColor: `${color}1f`, color };

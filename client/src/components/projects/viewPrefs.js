@@ -33,11 +33,13 @@ export const VIEW_SECTIONS = {
       ],
     },
     {
-      title: 'Work item columns',
+      // Also the details on Hierarchy's task rows (week, dept, status, link).
+      title: 'Task row columns',
       items: [
         { id: 'i_week', label: 'Week' },
         { id: 'i_task', label: 'Task', locked: true },
-        { id: 'i_detail', label: 'Category / Brand' },
+        { id: 'i_brand', label: 'Brand (Category / Status)' },
+        { id: 'i_category', label: 'Category (Projects / Brand / Status)' },
         { id: 'i_dept', label: 'Department' },
         { id: 'i_month', label: 'Month' },
         { id: 'i_status', label: 'Status' },
@@ -48,6 +50,7 @@ export const VIEW_SECTIONS = {
       title: 'All items table columns',
       items: [
         { id: 't_task', label: 'Project', locked: true },
+        { id: 't_taskname', label: 'Task Name' },
         { id: 't_brand', label: 'Brand' },
         { id: 't_category', label: 'Category' },
         { id: 't_when', label: 'When' },

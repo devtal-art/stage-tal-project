@@ -1,65 +1,102 @@
 const xlsx = require('xlsx');
 const { normalizeStatus } = require('../utils/projectStatuses');
 const { normalizeFrequency } = require('../utils/projectFrequencies');
+const { normalizeProjectDepartment } = require('../utils/projectDepartments');
 
-// Canonical field -> the header spellings (case/whitespace-insensitive) that
-// resolve to it. "category" also accepts "project name" because the sheets
-// this module has been given in practice use that header for what is
-// semantically a category/grouping ("Social Media", "Brand Material", ...),
-// not a project name.
-const HEADER_ALIASES = {
+// Project sheet parser.
+//
+// Saved field names are unchanged (no data migration): `taskName` holds the
+// PROJECT name and `description` holds the TASK. Three header layouts are
+// understood, decided per tab:
+//
+//   new     Year, Brand, Category, Department, Week No., Month, Project Name,
+//           Task Name, Links, Status, Frequency
+//           -> Project Name = project, Task Name = task
+//   old     ... Task Name, Description (no Project Name column)
+//           -> Task Name = project, Description = task
+//   legacy  ... Project Name, Task Name and NO Category column (the very first
+//           sheets used "Project Name" for the category)
+//           -> Project Name = category, Task Name = project, Description = task
+//
+// Every tab whose first row has a "Year" header is read (except one named
+// "Lists", which holds the template's dropdown values) and the rows combined.
+// Header matching ignores case and extra spaces.
+
+const ALIASES = {
   year: ['year', 'years'],
   brand: ['brand', 'brands'],
-  category: ['category', 'categories', 'project name', 'project names'],
-  department: ['department', 'departments'],
+  category: ['category', 'categories'],
+  department: ['department', 'departments', 'dept'],
   month: ['month', 'months'],
+  projectName: ['project name', 'project names', 'project'],
   taskName: ['task name', 'task names', 'task'],
-};
-const REQUIRED_FIELDS = Object.keys(HEADER_ALIASES);
-
-// Unlike REQUIRED_FIELDS, a sheet missing these columns is still valid - a
-// row simply gets an empty weekNo / no links, same as any already-saved
-// project from before this feature existed. Never affects row validity,
-// the duplicate key, or anything about the required-field flow above.
-const OPTIONAL_HEADER_ALIASES = {
-  weekNo: ['week no', 'week no.', 'week number', 'week'],
+  description: ['description', 'descriptions', 'work description'],
+  weekNo: ['week no', 'week no.', 'week number', 'week', 'wk'],
   links: ['links', 'link'],
   status: ['status'],
   frequency: ['frequency', 'frequencies'],
-  description: ['description', 'descriptions', 'work description'],
 };
-const CANONICAL_LABELS = {
+
+// Saved fields every row must have to be valid (taskName = the project).
+const REQUIRED_FIELDS = ['year', 'brand', 'category', 'department', 'month', 'taskName'];
+const LABELS = {
   year: 'Year',
   brand: 'Brand',
   category: 'Category',
   department: 'Department',
   month: 'Month',
-  taskName: 'Task Name',
+  taskName: 'Project Name',
 };
-const INVALID_FORMAT_MESSAGE =
-  `Invalid Excel format. Required columns are: ${REQUIRED_FIELDS.map((f) => CANONICAL_LABELS[f]).join(', ')}.`;
+// Columns a tab cannot do without (Category is checked per layout).
+const REQUIRED_COLUMNS = ['year', 'brand', 'department', 'month'];
+const OPTIONAL_COLUMNS = { weekNo: 'Week No.', links: 'Links', status: 'Status', frequency: 'Frequency' };
+
+const MAPPING_MESSAGES = {
+  new: 'New template: "Project Name" = project, "Task Name" = task.',
+  old: 'Old template: "Task Name" was read as the Project Name and "Description" as the Task Name.',
+  legacy: 'Oldest template (no Category column): "Project Name" was read as the Category, "Task Name" as the Project Name and "Description" as the Task Name.',
+};
 
 const normalizeHeader = (value) => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 const normalizeValue = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
+// Excel numbers can arrive as "2026.0" / "31.0" - read them as integers.
+const normalizeInteger = (value) => {
+  const text = normalizeValue(value);
+  return /^\d+(\.0+)?$/.test(text) ? String(parseInt(text, 10)) : text;
+};
 
-// Strict-duplicate key: exact (case-insensitive) match across every required
-// field. Shared by the in-file duplicate check below and by the controller's
-// cross-check against what's already saved, so "duplicate" means the same
-// thing in both places.
+const parserError = (code, message) => {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+};
+
+// Strict-duplicate key: the same project, task and week in the same
+// year/month/brand/category/department (case-insensitive, departments in
+// canonical form). Shared by the in-file check below and the controller's
+// check against what's already saved. Task and week are part of it so that
+// several tasks of one project in one month are all kept.
 const buildDedupeKey = (record) =>
-  REQUIRED_FIELDS.map((field) => String(record[field] ?? '').trim().toLowerCase()).join('|');
+  [
+    record.year,
+    record.brand,
+    record.category,
+    normalizeProjectDepartment(record.department),
+    record.month,
+    record.taskName,
+    record.description,
+    normalizeInteger(record.weekNo),
+  ]
+    .map((value) => normalizeValue(value).toLowerCase())
+    .join('|');
 exports.buildDedupeKey = buildDedupeKey;
 
-// A Links cell is expected to be one "Label: https://..." pair per line
-// (Excel/CSV cells commonly wrap this way via Alt+Enter). Each line is
-// parsed independently; a line with no recognizable URL is silently
-// skipped rather than rejected, since Links is optional and best-effort.
+// A Links cell holds one "Label: https://..." (or just a URL) per line. A
+// line with no recognizable URL is skipped - Links is optional.
 const URL_PATTERN = /(https?:\/\/\S+)/i;
-
 const parseLinks = (cellValue) => {
   const raw = String(cellValue ?? '');
   if (!raw.trim()) return [];
-
   return raw
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -74,119 +111,137 @@ const parseLinks = (cellValue) => {
     .filter(Boolean);
 };
 
-const invalidFormatError = () => {
-  const error = new Error(INVALID_FORMAT_MESSAGE);
-  error.code = 'INVALID_HEADERS';
-  return error;
+const findColumn = (headers, field) => headers.findIndex((h) => ALIASES[field].includes(h));
+
+// Which layout a tab uses and which column feeds each saved field.
+const resolveColumns = (headers, sheetName) => {
+  const col = {};
+  Object.keys(ALIASES).forEach((field) => { col[field] = findColumn(headers, field); });
+  const has = (field) => col[field] !== -1;
+
+  let mode;
+  const map = {};
+  if (has('projectName') && (has('category') || !has('taskName'))) {
+    mode = 'new';
+    map.category = col.category;
+    map.taskName = col.projectName;
+    map.description = has('taskName') ? col.taskName : col.description;
+  } else if (has('taskName') && !has('projectName')) {
+    mode = 'old';
+    map.category = col.category;
+    map.taskName = col.taskName;
+    map.description = col.description;
+  } else if (has('projectName') && has('taskName')) {
+    mode = 'legacy';
+    map.category = col.projectName;
+    map.taskName = col.taskName;
+    map.description = col.description;
+  } else {
+    throw parserError('INVALID_HEADERS', `Tab "${sheetName}" has neither a "Project Name" nor a "Task Name" column, so projects can't be read.`);
+  }
+
+  const missing = REQUIRED_COLUMNS.filter((f) => !has(f)).map((f) => LABELS[f]);
+  if (map.category === -1) missing.push('Category');
+  if (missing.length) {
+    throw parserError('INVALID_HEADERS', `Tab "${sheetName}" is missing the column(s): ${missing.join(', ')}.`);
+  }
+  REQUIRED_COLUMNS.forEach((f) => { map[f] = col[f]; });
+  Object.keys(OPTIONAL_COLUMNS).forEach((f) => { map[f] = col[f]; });
+
+  const warnings = Object.entries(OPTIONAL_COLUMNS)
+    .filter(([f]) => map[f] === -1)
+    .map(([, label]) => `Tab "${sheetName}": no "${label}" column - left blank.`);
+  if (map.description === -1) {
+    warnings.push(`Tab "${sheetName}": no ${mode === 'new' ? '"Task Name"' : '"Description"'} column - task names left blank.`);
+  }
+  return { mode, map, warnings };
 };
+
+const cell = (row, index) => (index === -1 ? '' : row[index]);
 
 exports.parseProjectsExcel = (filePath) => {
   let workbook;
   try {
     workbook = xlsx.readFile(filePath);
   } catch (err) {
-    const error = new Error('The uploaded file could not be read. It may be corrupted or not a valid Excel/CSV file.');
-    error.code = 'CORRUPTED_FILE';
-    throw error;
+    throw parserError('CORRUPTED_FILE', 'The uploaded file could not be read. It may be corrupted or not a valid Excel/CSV file.');
   }
+  if (!workbook.SheetNames.length) throw parserError('EMPTY_FILE', 'The uploaded file has no sheets.');
 
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) {
-    const error = new Error('The uploaded file has no sheets.');
-    error.code = 'EMPTY_FILE';
-    throw error;
-  }
-
-  const sheet = workbook.Sheets[sheetName];
-  const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
-
-  if (!rows || rows.length === 0) {
-    const error = new Error('The uploaded file is empty.');
-    error.code = 'EMPTY_FILE';
-    throw error;
-  }
-
-  const headerRow = rows[0];
-  if (!Array.isArray(headerRow)) {
-    throw invalidFormatError();
-  }
-
-  const normalizedHeaders = headerRow.map(normalizeHeader);
-
-  // Resolve each semantic field to the first column whose header matches one
-  // of its accepted aliases, so extra/reordered/renamed columns don't break
-  // parsing as long as every required field is represented.
-  const fieldToColumnIndex = {};
-  REQUIRED_FIELDS.forEach((field) => {
-    const aliases = HEADER_ALIASES[field];
-    const columnIndex = normalizedHeaders.findIndex((header) => aliases.includes(header));
-    if (columnIndex !== -1) {
-      fieldToColumnIndex[field] = columnIndex;
+  const tabs = [];
+  const ignoredTabs = [];
+  workbook.SheetNames.forEach((name) => {
+    const rows = xlsx.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', blankrows: false });
+    const headers = Array.isArray(rows[0]) ? rows[0].map(normalizeHeader) : [];
+    if (name.trim().toLowerCase() === 'lists' || !headers.includes('year')) {
+      ignoredTabs.push(name);
+      return;
     }
+    tabs.push({ name, rows, headers });
   });
 
-  const missingField = REQUIRED_FIELDS.some((field) => !(field in fieldToColumnIndex));
-  if (missingField) {
-    throw invalidFormatError();
+  if (tabs.length === 0) {
+    const anyRows = workbook.SheetNames.some((name) => xlsx.utils.sheet_to_json(workbook.Sheets[name], { header: 1, blankrows: false }).length);
+    if (!anyRows) throw parserError('EMPTY_FILE', 'The uploaded file is empty.');
+    throw parserError('INVALID_HEADERS', 'No tab has a "Year" header in its first row. Expected columns: Year, Brand, Category, Department, Week No., Month, Project Name, Task Name, Links, Status, Frequency.');
   }
 
-  const optionalFieldToColumnIndex = {};
-  Object.keys(OPTIONAL_HEADER_ALIASES).forEach((field) => {
-    const aliases = OPTIONAL_HEADER_ALIASES[field];
-    const columnIndex = normalizedHeaders.findIndex((header) => aliases.includes(header));
-    if (columnIndex !== -1) {
-      optionalFieldToColumnIndex[field] = columnIndex;
-    }
-  });
-
-  const dataRows = rows.slice(1);
   const records = [];
+  const mappings = [];
+  const warnings = [];
+  let skippedNoProject = 0;
 
-  dataRows.forEach((row, index) => {
-    const record = {
-      rowNumber: index + 2, // +1 for header row, +1 for 1-based numbering
-      year: normalizeValue(row[fieldToColumnIndex.year]),
-      brand: normalizeValue(row[fieldToColumnIndex.brand]),
-      category: normalizeValue(row[fieldToColumnIndex.category]),
-      department: normalizeValue(row[fieldToColumnIndex.department]),
-      month: normalizeValue(row[fieldToColumnIndex.month]),
-      taskName: normalizeValue(row[fieldToColumnIndex.taskName]),
-      weekNo: 'weekNo' in optionalFieldToColumnIndex ? normalizeValue(row[optionalFieldToColumnIndex.weekNo]) : '',
-      links: 'links' in optionalFieldToColumnIndex ? parseLinks(row[optionalFieldToColumnIndex.links]) : [],
-      // Free text, so only trimmed: normalizeValue would flatten the line
-      // breaks of a multi-line cell.
-      description: 'description' in optionalFieldToColumnIndex ? String(row[optionalFieldToColumnIndex.description] ?? '').trim() : '',
-    };
+  tabs.forEach(({ name, rows, headers }) => {
+    const { mode, map, warnings: tabWarnings } = resolveColumns(headers, name);
+    mappings.push({ sheet: name, mode, message: MAPPING_MESSAGES[mode] });
+    warnings.push(...tabWarnings);
 
-    // Status must be one of the six allowed values (see projectStatuses.js).
-    // A blank cell is simply "no status"; a non-blank value that isn't one of
-    // the six is kept out of the saved record (status stays '') and surfaced
-    // via unrecognizedStatus so the preview can flag it. Never affects row
-    // validity or the duplicate key.
-    const rawStatus = 'status' in optionalFieldToColumnIndex ? normalizeValue(row[optionalFieldToColumnIndex.status]) : '';
-    record.status = normalizeStatus(rawStatus);
-    record.unrecognizedStatus = rawStatus && !record.status ? rawStatus : '';
+    rows.slice(1).forEach((row, index) => {
+      const record = {
+        sheet: name,
+        rowNumber: index + 2, // +1 header row, +1 for 1-based numbering
+        year: normalizeInteger(cell(row, map.year)),
+        brand: normalizeValue(cell(row, map.brand)),
+        category: normalizeValue(cell(row, map.category)),
+        department: normalizeProjectDepartment(cell(row, map.department)),
+        month: normalizeValue(cell(row, map.month)),
+        taskName: normalizeValue(cell(row, map.taskName)),
+        weekNo: normalizeInteger(cell(row, map.weekNo)),
+        links: parseLinks(cell(row, map.links)),
+        // Free text: only trimmed, so a multi-line cell keeps its line breaks.
+        description: String(cell(row, map.description) ?? '').trim(),
+      };
 
-    // Same rule as Status, against the six values in projectFrequencies.js.
-    const rawFrequency = 'frequency' in optionalFieldToColumnIndex ? normalizeValue(row[optionalFieldToColumnIndex.frequency]) : '';
-    record.frequency = normalizeFrequency(rawFrequency);
-    record.unrecognizedFrequency = rawFrequency && !record.frequency ? rawFrequency : '';
+      // A row with no project at all (typically a spacer or note row) is
+      // dropped, not reported as invalid.
+      if (!record.taskName) {
+        const hasAnything = [record.year, record.brand, record.category, record.department, record.month, record.description].some(Boolean);
+        if (hasAnything) skippedNoProject += 1;
+        return;
+      }
 
-    const yearNum = parseInt(record.year, 10);
-    record.year = Number.isNaN(yearNum) ? record.year : yearNum;
+      // Status / Frequency: one of the allowed values or blank. Anything
+      // else is saved as blank and flagged in the preview.
+      const rawStatus = normalizeValue(cell(row, map.status));
+      record.status = normalizeStatus(rawStatus);
+      record.unrecognizedStatus = rawStatus && !record.status ? rawStatus : '';
+      const rawFrequency = normalizeValue(cell(row, map.frequency));
+      record.frequency = normalizeFrequency(rawFrequency);
+      record.unrecognizedFrequency = rawFrequency && !record.frequency ? rawFrequency : '';
 
-    record.missingFields = REQUIRED_FIELDS.filter((field) => {
-      const value = record[field];
-      return value === '' || value === null || value === undefined;
-    }).map((field) => CANONICAL_LABELS[field]);
-    record.valid = record.missingFields.length === 0;
-    record.isDuplicate = false;
+      const yearNum = parseInt(record.year, 10);
+      record.year = Number.isNaN(yearNum) ? record.year : yearNum;
 
-    records.push(record);
+      record.missingFields = REQUIRED_FIELDS.filter((field) => record[field] === '' || record[field] == null).map((field) => LABELS[field]);
+      record.valid = record.missingFields.length === 0;
+      record.isDuplicate = false;
+      records.push(record);
+    });
   });
 
-  // Flag exact duplicates (case-insensitive across all fields) among valid
-  // records only - review-only, nothing is removed.
+  if (skippedNoProject) warnings.push(`${skippedNoProject} row(s) without a Project Name were skipped.`);
+
+  // Exact repeats within the file (valid rows only) - flagged, not removed.
   const duplicateGroups = new Map();
   records.forEach((record) => {
     if (!record.valid) return;
@@ -195,13 +250,79 @@ exports.parseProjectsExcel = (filePath) => {
     duplicateGroups.get(key).push(record);
   });
   duplicateGroups.forEach((group) => {
-    if (group.length > 1) {
-      group.forEach((record) => { record.isDuplicate = true; });
-    }
+    if (group.length > 1) group.forEach((record) => { record.isDuplicate = true; });
   });
 
-  const invalidCount = records.filter((r) => !r.valid).length;
-  const duplicateCount = records.filter((r) => r.isDuplicate).length;
-
-  return { records, invalidCount, duplicateCount };
+  return {
+    records,
+    invalidCount: records.filter((r) => !r.valid).length,
+    duplicateCount: records.filter((r) => r.isDuplicate).length,
+    info: {
+      tabs: tabs.map((t) => t.name),
+      ignoredTabs,
+      mappings,
+      warnings,
+      skippedNoProject,
+    },
+  };
 };
+
+// ---------------------------------------------------------------------------
+// Possible duplicate names (never merged automatically - only reported):
+// two names whose letters+digits are equal, or nearly equal
+// ("Wireframe & Design" vs "Wireframing & Design").
+const squash = (name) => String(name ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const levenshtein = (a, b) => {
+  if (a === b) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+};
+
+// "April Promo Flyers" vs "June Promo Flyers" are different monthly editions,
+// not a typo: names that differ only by a month are never paired.
+const MONTH_WORDS = /\b(january|february|march|april|may|june|july|august|september|october|november|december)|\b(jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b/gi;
+
+const SIMILARITY = 0.8;
+const MAX_EDITS = 4;
+const isSimilar = (a, b) => {
+  const x = squash(a);
+  const y = squash(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (squash(String(a).replace(MONTH_WORDS, '')) === squash(String(b).replace(MONTH_WORDS, ''))) return false;
+  const longest = Math.max(x.length, y.length);
+  if (Math.min(x.length, y.length) < 5 || Math.abs(x.length - y.length) > MAX_EDITS) return false;
+  const edits = levenshtein(x, y);
+  return edits <= MAX_EDITS && 1 - edits / longest >= SIMILARITY;
+};
+
+// Pairs of different names where at least one comes from this upload.
+// `saved` = names already in the database.
+exports.findSimilarNames = (uploaded, saved = []) => {
+  const fromFile = Array.from(new Set(uploaded.filter(Boolean)));
+  const savedSet = new Set(saved.filter(Boolean));
+  const pairs = [];
+  const seen = new Set();
+  const add = (a, b, where) => {
+    const key = [a, b].sort().join('\u0000');
+    if (a === b || seen.has(key)) return;
+    seen.add(key);
+    pairs.push({ a, b, where });
+  };
+  fromFile.forEach((name, i) => {
+    fromFile.slice(i + 1).forEach((other) => { if (isSimilar(name, other)) add(name, other, 'file'); });
+    savedSet.forEach((other) => { if (!fromFile.includes(other) && isSimilar(name, other)) add(name, other, 'saved'); });
+  });
+  return pairs;
+};
+
+exports.normalizeInteger = normalizeInteger;
+exports.isSimilar = isSimilar;

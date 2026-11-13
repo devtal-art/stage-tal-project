@@ -75,7 +75,7 @@ export default function ProjectsDashboard() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold tracking-tight text-gray-900">Projects Overview</h2>
-        <p className="text-sm text-gray-500">{filteredProjects.length} of {projects.length} project(s)</p>
+        <p className="text-sm text-gray-500">{filteredProjects.length} of {projects.length} work items</p>
       </div>
 
       <ProjectsFilters filters={filters} onChange={handleFiltersChange} {...filterOptions} hideBrand />

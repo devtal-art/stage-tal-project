@@ -27,6 +27,7 @@ const handleUpload = (req, res, next) => {
 
 router.post('/preview', handleUpload, projectController.previewProjects);
 router.post('/upload', handleUpload, projectController.uploadProjects);
+router.get('/template', projectController.downloadTemplate);
 router.get('/', projectController.getProjects);
 
 module.exports = router;

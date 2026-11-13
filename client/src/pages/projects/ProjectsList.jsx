@@ -1,50 +1,48 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { Download, FolderKanban, Upload as UploadIcon, Table2, ListTree, LayoutList } from 'lucide-react';
+import { Download, FolderKanban, Upload as UploadIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { getProjects } from '../../services/projectsApi';
 import { DEFAULT_FILTERS, filterRecords, getCascadingFilterOptions, sanitizeFilters, formatLinksForExport, validateProjectFilters } from '../../components/projects/dataUtils';
-import { splitDepartments } from '../../components/projects/constants';
+import { normalizeDepartment } from '../../components/projects/constants';
 import CustomizeViewMenu from '../../components/projects/CustomizeViewMenu';
-import ProjectsSimpleTable from '../../components/projects/ProjectsSimpleTable';
-import HierarchyTree from '../../components/projects/HierarchyTree';
 import LinksModal from '../../components/projects/LinksModal';
 import useProjectViewPrefs from '../../components/projects/viewPrefs';
 import useUrlFilters from '../../lib/useUrlFilters';
 import {
-  GROUPS, GROUP_IDS, STATUS_ORDER, STATUS_COLORS, statusOf, statusLabel, shortBrand, deptText, weekText,
-  monthYear, whenText, buildGroups, buildChildren, sortItemsRecent, sortTable,
+  GROUPS, GROUP_IDS, STATUS_ORDER, STATUS_COLORS, TASK_MISSING, statusOf, statusLabel, shortBrand, deptText, weekText,
+  monthYear, whenText, projectOf, taskOf, buildGroups, buildChildren, sortItems, itemColumnsFor, sortTable,
+  buildTree, defaultTreeOpen, allTreeOpen,
 } from '../../components/projects/projectsView';
 import './ProjectsList.css';
 
-// Three views share one filter bar:
-//   Table / Hierarchy - the original components (ProjectsSimpleTable, HierarchyTree)
-//   Compact           - design from refference/TAL Projects (Standalone).html
-// Filters, view and "Group by" live in the URL (shareable links, Dashboard deep
-// links keep working); open rows, sort and paging are per visit.
-const VIEWS = [
-  { id: 'table', label: 'Table view', Icon: Table2 },
-  { id: 'hierarchy', label: 'Hierarchy view', Icon: ListTree },
-  { id: 'compact', label: 'Compact view', Icon: LayoutList },
-];
-const VIEW_IDS = VIEWS.map((v) => v.id);
-// Customize-view preferences key per view ('list' = the new Compact design;
-// the old 'compact' prefs belonged to the previous compact cards).
-const PREFS_KEY = { table: 'table', hierarchy: 'hierarchy', compact: 'list' };
+// Projects page (design: refference/TAL Projects (Standalone) (1).html).
+// "Group by" is the only switcher: Projects | Brand | Category | Status |
+// All items | Hierarchy. Filters and the grouping live in the URL (shareable
+// links, Dashboard deep links keep working); open rows, sort and paging are
+// per visit.
+//
+// Data naming: saved `taskName` = the Project, `description` = the Task.
 const GROUP_PAGE = 30;
 const TABLE_PAGE = 40;
+// Expand the whole tree for a search with at most this many results.
+const TREE_AUTO_EXPAND = 300;
 
-const URL_DEFAULTS = { ...DEFAULT_FILTERS, view: 'table', group: 'task' };
-const validateUrlState = (state) => ({
-  ...validateProjectFilters(state),
-  view: VIEW_IDS.includes(state.view) ? state.view : 'table',
-  group: GROUP_IDS.includes(state.group) ? state.group : 'task',
-});
-// Query param from the previous Compact view (By Category / Task / Status).
+// `view` is only read, to turn links from the old Table / Hierarchy /
+// Compact switcher into the matching grouping; it is never written back.
+const URL_DEFAULTS = { ...DEFAULT_FILTERS, group: 'task', view: '' };
+const validateUrlState = (state) => {
+  let group = GROUP_IDS.includes(state.group) ? state.group : 'task';
+  if (state.view === 'hierarchy') group = 'tree';
+  else if (state.view === 'table') group = 'items';
+  return { ...validateProjectFilters(state), group, view: '' };
+};
+// Query param from an earlier Compact view (By Category / Task / Status).
 const LEGACY_KEYS = ['by'];
 
 const defaultSort = (group) => (group === 'items' ? { key: 'recent', dir: -1 } : { key: 'count', dir: -1 });
+const DEFAULT_ITEM_SORT = { key: 'month', dir: -1 };
 
 // Filter dropdowns, in the reference's order. `options` key is from
 // getCascadingFilterOptions; `label` formats an option for display.
@@ -55,9 +53,21 @@ const FILTER_DEFS = [
   { id: 'week', all: 'All weeks', options: 'weeks', label: (o) => `Week ${o}` },
   { id: 'brand', all: 'All brands', options: 'brands' },
   { id: 'category', all: 'All categories', options: 'categories' },
-  { id: 'department', all: 'All departments', options: 'departments', label: (o) => splitDepartments(o).join(' + ') || o },
+  { id: 'department', all: 'All departments', options: 'departments' },
   { id: 'frequency', all: 'All frequencies', options: 'frequencies' },
 ];
+
+// Task-row columns: width, header, sort key and the Customize-view id.
+const ITEM_COLS = {
+  week: { w: '64px', head: 'Week', sort: 'week', pref: 'i_week' },
+  task: { w: 'minmax(220px,1.8fr)', head: 'Task', sort: 'task' },
+  brand: { w: 'minmax(110px,0.8fr)', head: 'Brand', sort: 'brand', pref: 'i_brand' },
+  category: { w: 'minmax(120px,0.9fr)', head: 'Category', sort: 'category', pref: 'i_category' },
+  dept: { w: '96px', head: 'Dept', sort: 'dept', pref: 'i_dept' },
+  month: { w: '92px', head: 'Month', sort: 'month', pref: 'i_month' },
+  status: { w: '118px', head: 'Status', sort: 'status', pref: 'i_status' },
+  link: { w: '96px', head: 'Link', pref: 'i_link' },
+};
 
 const onActivate = (fn) => (e) => {
   if (e.key === 'Enter' || e.key === ' ') {
@@ -70,9 +80,9 @@ function ProgressBar({ segments, text, small }) {
   return (
     <div>
       <div className={`pv-bar${small ? ' sm' : ''}`}>
-        {segments.map((s) => <div key={s.status} style={{ width: s.width, background: s.color }} title={`${statusLabel(s.status)}`} />)}
+        {segments.map((s) => <div key={s.status} style={{ width: s.width, background: s.color }} title={statusLabel(s.status)} />)}
       </div>
-      <div className="pv-bar-text" style={small ? { fontSize: 11.5, marginTop: 4 } : undefined}>{text}</div>
+      {text && <div className={`pv-bar-text${small ? ' sm' : ''}`}>{text}</div>}
     </div>
   );
 }
@@ -87,47 +97,63 @@ function StatusCell({ record }) {
   );
 }
 
-// One link opens directly; several open the existing links popup.
-function ItemLink({ links }) {
+// The task text, or a muted "Task name not uploaded" (never the project name).
+function TaskText({ record, className = '' }) {
+  const text = taskOf(record);
+  return text
+    ? <span className={`${className} pv-ellipsis`} title={text}>{text}</span>
+    : <span className={`${className} pv-ellipsis pv-missing`}>{TASK_MISSING}</span>;
+}
+
+// One link opens directly; several open the links popup.
+function ItemLink({ links, compact }) {
   const [open, setOpen] = useState(false);
   const list = (links || []).filter((l) => l && l.url);
   if (list.length === 0) return <span />;
   if (list.length === 1) {
     return (
       <span>
-        <a className="pv-open-link" href={list[0].url} target="_blank" rel="noopener noreferrer" title={list[0].label || list[0].url}>Open ↗</a>
+        <a className="pv-open-link" href={list[0].url} target="_blank" rel="noopener noreferrer" title={list[0].label || list[0].url} onClick={(e) => e.stopPropagation()}>
+          {compact ? 'Link ↗' : 'Open ↗'}
+        </a>
       </span>
     );
   }
   return (
     <span>
-      <button type="button" className="pv-open-link" onClick={() => setOpen(true)}>{list.length} links</button>
+      <button type="button" className="pv-open-link" onClick={(e) => { e.stopPropagation(); setOpen(true); }}>{list.length} links</button>
       {open && <LinksModal links={list} onClose={() => setOpen(false)} />}
     </span>
   );
 }
 
-// Work-item rows (inside an opened group / child) + their header.
-function ItemRows({ records, detailLabel, detailOf, shown, flat }) {
-  const cols = [
-    shown('i_week') && { id: 'week', w: '60px', head: 'Week' },
-    { id: 'task', w: 'minmax(0,1.8fr)', head: 'Task' },
-    shown('i_detail') && { id: 'detail', w: '170px', head: detailLabel },
-    shown('i_dept') && { id: 'dept', w: '84px', head: 'Dept' },
-    shown('i_month') && { id: 'month', w: '100px', head: 'Month' },
-    shown('i_status') && { id: 'status', w: '120px', head: 'Status' },
-    shown('i_link') && { id: 'link', w: '90px', head: 'Link' },
-  ].filter(Boolean);
+function SortHead({ col, sort, onSort, className }) {
+  const on = col.sort && sort.key === col.sort;
+  return (
+    <button
+      type="button"
+      disabled={!col.sort}
+      onClick={col.sort ? () => onSort(col.sort) : undefined}
+      className={`${className}${col.sort ? ' sortable' : ''}${on ? ' is-on' : ''}${col.right ? ' right' : ''}`}
+      aria-sort={on ? (sort.dir > 0 ? 'ascending' : 'descending') : undefined}
+    >
+      {col.head}{on ? (sort.dir > 0 ? ' ↑' : ' ↓') : ''}
+    </button>
+  );
+}
+
+// Task rows (the leaf level of every grouping) + their sortable header.
+function ItemRows({ records, group, shown, isort, onSort }) {
+  const cols = itemColumnsFor(group)
+    .filter((id) => !ITEM_COLS[id].pref || shown(ITEM_COLS[id].pref))
+    .map((id) => ({ id, ...ITEM_COLS[id] }));
   const template = cols.map((c) => c.w).join(' ');
   const cell = (id, r) => {
     switch (id) {
       case 'week': return <span key={id} className="wk">{weekText(r)}</span>;
-      case 'task': {
-        const text = r.description || r.taskName;
-        const title = r.description ? `${r.taskName} — ${r.description}` : r.taskName;
-        return <span key={id} className="task pv-ellipsis" title={title}>{text}</span>;
-      }
-      case 'detail': return <span key={id} className="detail pv-ellipsis" title={detailOf(r)}>{detailOf(r)}</span>;
+      case 'task': return <TaskText key={id} record={r} className="task" />;
+      case 'brand': return <span key={id} className="detail pv-ellipsis" title={r.brand}>{shortBrand(r.brand)}</span>;
+      case 'category': return <span key={id} className="detail pv-ellipsis" title={r.category}>{r.category}</span>;
       case 'dept': return <span key={id} className="dept">{deptText(r)}</span>;
       case 'month': return <span key={id} className="month">{monthYear(r)}</span>;
       case 'status': return <StatusCell key={id} record={r} />;
@@ -138,10 +164,10 @@ function ItemRows({ records, detailLabel, detailOf, shown, flat }) {
   return (
     <>
       <div className="pv-items-head" style={{ gridTemplateColumns: template }}>
-        {cols.map((c) => <span key={c.id}>{c.head}</span>)}
+        {cols.map((c) => <SortHead key={c.id} col={c} sort={isort} onSort={onSort} className="pv-ith" />)}
       </div>
-      {sortItemsRecent(records).map((r) => (
-        <div key={r._id} className={`pv-item${flat ? ' flat' : ''}`} style={{ gridTemplateColumns: template }}>
+      {sortItems(records, isort).map((r) => (
+        <div key={r._id} className="pv-item" style={{ gridTemplateColumns: template }}>
           {cols.map((c) => cell(c.id, r))}
         </div>
       ))}
@@ -154,23 +180,24 @@ export default function ProjectsList() {
   const [loading, setLoading] = useState(true);
   const [urlState, setUrlState] = useUrlFilters(URL_DEFAULTS, { validate: validateUrlState, dropKeys: LEGACY_KEYS });
   const group = urlState.group;
-  const view = urlState.view;
   const filters = useMemo(() => {
     const rest = { ...urlState };
     delete rest.group;
     delete rest.view;
     return rest;
   }, [urlState]);
-  const setFilters = (next) => setUrlState((prev) => ({ ...next, group: prev.group, view: prev.view }));
-  const setView = (id) => setUrlState((prev) => ({ ...prev, view: id }));
+  const setFilters = (next) => setUrlState((prev) => ({ ...next, group: prev.group, view: '' }));
 
-  const prefsKey = PREFS_KEY[view];
+  const prefsKey = 'list';
   const { prefs, toggle: togglePref, reset: resetPrefs, move: moveColumn } = useProjectViewPrefs(prefsKey);
   const shown = (id) => !prefs.hiddenColumns.includes(id);
   const hiddenFilters = prefs.hiddenFilters;
 
   const [sort, setSort] = useState(() => defaultSort(group));
+  const [isort, setIsort] = useState(DEFAULT_ITEM_SORT);
   const [open, setOpen] = useState({});
+  // null = the default open path (or everything, for a short search result).
+  const [treeOpen, setTreeOpen] = useState(null);
   const [limit, setLimit] = useState(GROUP_PAGE);
   const [page, setPage] = useState(0);
 
@@ -206,11 +233,12 @@ export default function ProjectsList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hiddenFilters, filters]);
 
-  // New filters or grouping start again from the first page.
+  // New filters or grouping start again from the first page / default tree.
   const filterKey = JSON.stringify(urlState);
   useEffect(() => {
     setLimit(GROUP_PAGE);
     setPage(0);
+    setTreeOpen(null);
   }, [filterKey]);
 
   const handleFiltersChange = (next) => setFilters(sanitizeFilters(projects, next));
@@ -226,41 +254,67 @@ export default function ProjectsList() {
     return c;
   }, [statusBase]);
 
-  const isCompact = view === 'compact';
   const isTable = group === 'items';
-  const groups = useMemo(() => (isCompact && !isTable ? buildGroups(filtered, group, sort) : []), [filtered, group, sort, isTable, isCompact]);
-  const tableRows = useMemo(() => (isCompact && isTable ? sortTable(filtered, sort) : []), [filtered, sort, isTable, isCompact]);
+  const isTree = group === 'tree';
+  const isGrouped = !isTable && !isTree;
+  const groups = useMemo(() => (isGrouped ? buildGroups(filtered, group, sort) : []), [filtered, group, sort, isGrouped]);
+  const tableRows = useMemo(() => (isTable ? sortTable(filtered, sort) : []), [filtered, sort, isTable]);
+  const tree = useMemo(() => (isTree ? buildTree(filtered) : []), [filtered, isTree]);
+  const searchActive = filters.search.trim() !== '';
+  const treeOpenNow = useMemo(() => {
+    if (!isTree) return {};
+    if (treeOpen) return treeOpen;
+    return searchActive && filtered.length <= TREE_AUTO_EXPAND ? allTreeOpen(tree) : defaultTreeOpen(tree);
+  }, [isTree, treeOpen, tree, searchActive, filtered.length]);
 
   const pickGroup = (id) => {
-    setUrlState((prev) => ({ ...prev, group: id }));
+    setUrlState((prev) => ({ ...prev, group: id, view: '' }));
     setOpen({});
     setSort(defaultSort(id));
   };
   const toggleOpen = (key) => setOpen((o) => ({ ...o, [key]: !o[key] }));
-  const sortBy = (key) => () => setSort((s) => ({
-    key,
-    dir: s.key === key ? -s.dir : (['name', 'task', 'brand'].includes(key) ? 1 : -1),
-  }));
+  const toggleTree = (key) => setTreeOpen({ ...treeOpenNow, [key]: !treeOpenNow[key] });
+  const sortBy = (key) => {
+    setSort((s) => ({ key, dir: s.key === key ? -s.dir : (['name', 'task', 'brand'].includes(key) ? 1 : -1) }));
+    setPage(0);
+  };
+  const sortItemsBy = (key) => setIsort((s) => ({ key, dir: s.key === key ? -s.dir : 1 }));
 
-  const hasFilters = filters.search.trim() !== '' || Object.keys(DEFAULT_FILTERS).some((k) => k !== 'search' && filters[k] !== DEFAULT_FILTERS[k]);
+  const expandAll = () => {
+    if (isTree) {
+      setTreeOpen(allTreeOpen(tree));
+      return;
+    }
+    // Outer rows and their level-2 rows, so every task row shows.
+    const o = {};
+    groups.slice(0, limit).forEach((g) => {
+      o[g.key] = true;
+      buildChildren(g, group).forEach((ch) => { o[ch.key] = true; });
+    });
+    setOpen(o);
+  };
+  const collapseAll = () => (isTree ? setTreeOpen({}) : setOpen({}));
 
-  // Same columns/format as before, so an export can be re-uploaded as-is.
+  const hasFilters = searchActive || Object.keys(DEFAULT_FILTERS).some((k) => k !== 'search' && filters[k] !== DEFAULT_FILTERS[k]);
+
+  // The current filtered rows, in the upload template's column order, so an
+  // export can be uploaded again as-is.
   const handleExport = () => {
     const rows = filtered.map((r) => ({
       Year: r.year,
       Brand: r.brand,
       Category: r.category,
-      Department: r.department,
+      Department: normalizeDepartment(r.department),
       'Week No.': r.weekNo || '',
       Month: r.month,
-      'Task Name': r.taskName,
+      'Project Name': projectOf(r),
+      'Task Name': taskOf(r),
       Links: formatLinksForExport(r.links),
       Status: r.status || '',
       Frequency: r.frequency || '',
-      Description: r.description || '',
     }));
     const worksheet = XLSX.utils.json_to_sheet(rows);
-    worksheet['!cols'] = [{ wch: 6 }, { wch: 24 }, { wch: 22 }, { wch: 16 }, { wch: 9 }, { wch: 8 }, { wch: 40 }, { wch: 55 }, { wch: 14 }, { wch: 12 }, { wch: 60 }];
+    worksheet['!cols'] = [{ wch: 6 }, { wch: 24 }, { wch: 22 }, { wch: 16 }, { wch: 9 }, { wch: 8 }, { wch: 32 }, { wch: 60 }, { wch: 55 }, { wch: 14 }, { wch: 12 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Projects');
     XLSX.writeFile(workbook, `projects_export_${Date.now()}.xlsx`);
@@ -290,7 +344,7 @@ export default function ProjectsList() {
   const groupDef = GROUPS.find((g) => g.id === group);
   const hasCategoryCol = (group === 'task' || group === 'brand') && shown('g_category');
 
-  // Group row columns.
+  // Outer row columns.
   const gCols = [
     { id: 'caret', w: '16px' },
     { id: 'name', w: hasCategoryCol ? 'minmax(0,2.2fr)' : 'minmax(0,2.4fr)', head: groupDef.head, sort: 'name' },
@@ -302,31 +356,29 @@ export default function ProjectsList() {
   ].filter(Boolean);
   // "All items" table columns.
   const tCols = [
-    { id: 'task', w: 'minmax(0,2.2fr)', head: 'Project', sort: 'task' },
-    shown('t_brand') && { id: 'brand', w: 'minmax(0,1.3fr)', head: 'Brand', sort: 'brand' },
-    shown('t_category') && { id: 'category', w: 'minmax(0,1.5fr)', head: 'Category' },
+    { id: 'task', w: 'minmax(0,1.6fr)', head: 'Project', sort: 'task' },
+    shown('t_taskname') && { id: 'taskname', w: 'minmax(0,1.9fr)', head: 'Task Name' },
+    shown('t_brand') && { id: 'brand', w: 'minmax(0,1.1fr)', head: 'Brand', sort: 'brand' },
+    shown('t_category') && { id: 'category', w: 'minmax(0,1.2fr)', head: 'Category' },
     shown('t_when') && { id: 'when', w: '150px', head: 'When', sort: 'recent' },
-    shown('t_status') && { id: 'status', w: '120px', head: 'Status' },
-    shown('t_dept') && { id: 'dept', w: '90px', head: 'Dept' },
+    shown('t_status') && { id: 'status', w: '118px', head: 'Status' },
+    shown('t_dept') && { id: 'dept', w: '96px', head: 'Dept' },
     shown('t_link') && { id: 'link', w: '90px', head: 'Link' },
   ].filter(Boolean);
   const cols = isTable ? tCols : gCols;
   const template = cols.map((c) => c.w).join(' ');
-  // Child (brand + category) rows under a project.
+  // Level-2 rows.
   const childTemplate = ['16px', 'minmax(0,2fr)', shown('g_period') && 'minmax(0,1.4fr)', shown('g_progress') && 'minmax(0,1.2fr)', shown('g_items') && '48px'].filter(Boolean).join(' ');
 
-  const detailLabel = group === 'category' ? 'Brand' : 'Category';
-  const detailOf = (r) => (group === 'category' ? shortBrand(r.brand) : r.category);
-
-  const total = isTable ? tableRows.length : groups.length;
+  const total = isTable ? tableRows.length : isTree ? filtered.length : groups.length;
   const shownGroups = groups.slice(0, limit);
   const pageRows = tableRows.slice(page * TABLE_PAGE, page * TABLE_PAGE + TABLE_PAGE);
-  const canMore = isTable ? (page + 1) * TABLE_PAGE < total : limit < total;
+  const canMore = isTable ? (page + 1) * TABLE_PAGE < total : isGrouped && limit < total;
   let footText = '';
   if (total) {
-    footText = isTable
-      ? `Showing ${page * TABLE_PAGE + 1}–${page * TABLE_PAGE + pageRows.length} of ${total} items`
-      : `Showing ${shownGroups.length} of ${total} ${groupDef.unit} · ${filtered.length} work items`;
+    if (isTable) footText = `Showing ${page * TABLE_PAGE + 1}–${page * TABLE_PAGE + pageRows.length} of ${total} items`;
+    else if (isTree) footText = `${filtered.length} work items`;
+    else footText = `Showing ${shownGroups.length} of ${total} ${groupDef.unit} · ${filtered.length} work items`;
   }
 
   const countText = filtered.length === projects.length
@@ -357,7 +409,8 @@ export default function ProjectsList() {
 
   const renderTableCell = (c, r) => {
     switch (c.id) {
-      case 'task': return <span key="task" className="t pv-ellipsis" title={r.description ? `${r.taskName} — ${r.description}` : r.taskName}>{r.taskName}</span>;
+      case 'task': return <span key="task" className="t pv-ellipsis" title={projectOf(r)}>{projectOf(r)}</span>;
+      case 'taskname': return <TaskText key="taskname" record={r} className="c" />;
       case 'brand': return <span key="brand" className="c pv-ellipsis" title={r.brand}>{r.brand}</span>;
       case 'category': return <span key="category" className="c pv-ellipsis" title={r.category}>{r.category}</span>;
       case 'when': return <span key="when" className="when">{whenText(r)}</span>;
@@ -368,16 +421,70 @@ export default function ProjectsList() {
     }
   };
 
+  // Hierarchy as a flat list of rows (only the open branches).
+  const treeRows = [];
+  if (isTree) {
+    const node = (key, depth, content, { count, toggle = true, cls = '' } = {}) => {
+      const isOpen = !!treeOpenNow[key];
+      treeRows.push(
+        <div
+          key={key}
+          className={`pv-tree-row d${depth}${cls}${isOpen ? ' is-open' : ''}`}
+          {...(toggle ? {
+            role: 'button', tabIndex: 0, 'aria-expanded': isOpen, onClick: () => toggleTree(key), onKeyDown: onActivate(() => toggleTree(key)),
+          } : {})}
+        >
+          <span className={`pv-caret${isOpen ? ' is-open' : ''}`} style={toggle ? undefined : { visibility: 'hidden' }}>▶</span>
+          {content}
+          <span className="pv-spacer" />
+          {count != null && <span className="pv-tree-count">{count}</span>}
+        </div>,
+      );
+      return isOpen;
+    };
+    tree.forEach((Y) => {
+      if (!node(Y.key, 0, <span className="pv-tree-year">{Y.label}</span>, { count: `${Y.count} items` })) return;
+      Y.months.forEach((M) => {
+        if (!node(M.key, 1, <span className="pv-tree-month">{M.label}</span>, { count: M.count })) return;
+        M.brands.forEach((B) => {
+          const content = (<><span className="pv-badge" aria-hidden="true">{B.badge}</span><span className="pv-tree-label" title={B.label}>{B.label}</span></>);
+          if (!node(B.key, 2, content, { count: B.count, cls: ' is-brand' })) return;
+          B.categories.forEach((C) => {
+            if (!node(C.key, 3, <span className="pv-cat-chip">{C.label}</span>, { count: C.count })) return;
+            C.projects.forEach((P) => {
+              const pc = (<><span className="pv-tree-label strong" title={P.label}>{P.label}</span><span className="pv-mini-bar">{P.segments.map((s) => <span key={s.status} style={{ width: s.width, background: s.color }} />)}</span></>);
+              if (!node(P.key, 4, pc, { count: `${P.count} ${P.count === 1 ? 'task' : 'tasks'}` })) return;
+              P.tasks.forEach((t) => {
+                const s = statusOf(t);
+                treeRows.push(
+                  <div key={t._id} className="pv-tree-row d5 is-task">
+                    <span className="pv-dot" style={{ background: STATUS_COLORS[s] }} />
+                    <TaskText record={t} className="pv-tree-task" />
+                    <span className="pv-spacer" />
+                    {shown('i_status') && <span className="pv-tree-status">{statusLabel(s)}</span>}
+                    {shown('i_week') && <span className="pv-week-tag">{String(t.weekNo ?? '').trim() ? `Wk ${String(t.weekNo).trim()}` : 'Wk —'}</span>}
+                    {shown('i_dept') && <span className="pv-dept-chip">{deptText(t)}</span>}
+                    {shown('i_link') && <span className="pv-tree-link"><ItemLink links={t.links} compact /></span>}
+                  </div>,
+                );
+              });
+            });
+          });
+        });
+      });
+    });
+  }
+
   return (
     <div className="pv">
       <div className="pv-head">
         <div className="pv-title">
-          <h2>All Projects</h2>
+          <h2>Projects</h2>
           <span>{countText}</span>
         </div>
         <div className="pv-actions">
           <CustomizeViewMenu key={prefsKey} view={prefsKey} prefs={prefs} onToggle={togglePref} onReset={resetPrefs} onMove={moveColumn} />
-          <Button variant="outline" onClick={handleExport}>
+          <Button variant="outline" onClick={handleExport} title={`Export the ${filtered.length} filtered work items`}>
             <Download className="w-4 h-4 mr-2" /> Export
           </Button>
         </div>
@@ -388,7 +495,7 @@ export default function ProjectsList() {
           className="pv-search"
           value={filters.search}
           onChange={(e) => setFilter('search', e.target.value)}
-          placeholder="Search task, brand, category or description…"
+          placeholder="Search project, task, brand or category…"
           aria-label="Search projects"
         />
         <div className="pv-row">
@@ -433,33 +540,6 @@ export default function ProjectsList() {
 
       <div className="pv-toolbar">
         <div className="pv-row" style={{ gap: 10 }}>
-          <span className="pv-seg-label">View</span>
-          <div className="pv-seg" role="group" aria-label="View">
-            {VIEWS.map((v) => (
-              <button key={v.id} type="button" aria-pressed={view === v.id} className={`pv-view-btn${view === v.id ? ' is-on' : ''}`} onClick={() => setView(v.id)}>
-                <v.Icon aria-hidden="true" />
-                {v.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {view === 'table' && (
-        <section className="pv-card pv-legacy">
-          <ProjectsSimpleTable records={filtered} hiddenColumns={prefs.hiddenColumns} columnOrder={prefs.columnOrder} />
-        </section>
-      )}
-
-      {view === 'hierarchy' && (
-        <section className="pv-card pv-legacy">
-          <HierarchyTree records={filtered} hiddenDetails={prefs.hiddenColumns} pageScroll searchActive={filters.search.trim() !== ''} totalCount={projects.length} />
-        </section>
-      )}
-
-      {isCompact && (<>
-      <div className="pv-toolbar">
-        <div className="pv-row" style={{ gap: 10 }}>
           <span className="pv-seg-label">Group by</span>
           <div className="pv-seg" role="group" aria-label="Group by">
             {GROUPS.map((g) => (
@@ -471,30 +551,24 @@ export default function ProjectsList() {
         </div>
         {!isTable && (
           <div className="pv-row" style={{ gap: 12 }}>
-            <button type="button" className="pv-plain-btn" onClick={() => setOpen(Object.fromEntries(groups.map((g) => [g.key, true])))}>Expand all</button>
-            <button type="button" className="pv-plain-btn" onClick={() => setOpen({})}>Collapse all</button>
+            <button type="button" className="pv-plain-btn" onClick={expandAll}>Expand all</button>
+            <button type="button" className="pv-plain-btn" onClick={collapseAll}>Collapse all</button>
           </div>
         )}
       </div>
 
       <section className="pv-card pv-list">
         <div className="pv-scroll">
-          <div className="pv-scroll-inner">
-            <div className="pv-grid pv-thead" style={{ gridTemplateColumns: template }}>
-              {cols.map((c) => (c.id === 'caret' ? <span key="caret" /> : (
-                <button
-                  key={c.id}
-                  type="button"
-                  disabled={!c.sort}
-                  onClick={c.sort ? sortBy(c.sort) : undefined}
-                  className={`pv-th${c.sort ? ' sortable' : ''}${sort.key === c.sort ? ' is-on' : ''}${c.right ? ' right' : ''}`}
-                >
-                  {c.head}{sort.key === c.sort ? (sort.dir > 0 ? ' ↑' : ' ↓') : ''}
-                </button>
-              )))}
-            </div>
+          <div className={`pv-scroll-inner${isTree ? ' is-tree' : ''}`}>
+            {!isTree && (
+              <div className="pv-grid pv-thead" style={{ gridTemplateColumns: template }}>
+                {cols.map((c) => (c.id === 'caret'
+                  ? <span key="caret" />
+                  : <SortHead key={c.id} col={c} sort={sort} onSort={sortBy} className="pv-th" />))}
+              </div>
+            )}
 
-            {!isTable && shownGroups.map((g) => {
+            {isGrouped && shownGroups.map((g) => {
               const isOpen = !!open[g.key];
               return (
                 <div key={g.key} className="pv-group">
@@ -511,7 +585,7 @@ export default function ProjectsList() {
                   </div>
                   {isOpen && (
                     <div className="pv-open">
-                      {group === 'task' ? buildChildren(g).map((ch) => {
+                      {buildChildren(g, group).map((ch) => {
                         const childOpen = !!open[ch.key];
                         return (
                           <div key={ch.key} className="pv-child">
@@ -526,23 +600,21 @@ export default function ProjectsList() {
                             >
                               <span className={`pv-caret${childOpen ? ' is-open' : ''}`} style={{ fontSize: 11 }}>▶</span>
                               <div style={{ minWidth: 0 }}>
-                                <div className="pv-child-name">{ch.brand}</div>
-                                <div className="pv-child-sub">{ch.category}</div>
+                                <div className="pv-child-name">{ch.title}</div>
+                                <div className="pv-child-sub">{ch.sub}</div>
                               </div>
-                              {shown('g_period') && <div className="pv-cell" style={{ fontSize: 12.5 }}>{ch.period}<small style={{ fontSize: 11.5 }}>{ch.frequencyText}</small></div>}
+                              {shown('g_period') && <div className="pv-cell pv-child-period">{ch.period}<small>{ch.frequencyText}</small></div>}
                               {shown('g_progress') && <ProgressBar small segments={ch.segments} text={ch.statusText} />}
-                              {shown('g_items') && <span className="pv-count" style={{ fontSize: 13, fontWeight: 400 }}>{ch.count}</span>}
+                              {shown('g_items') && <span className="pv-count sm">{ch.count}</span>}
                             </div>
                             {childOpen && (
                               <div className="pv-child-items">
-                                <ItemRows records={ch.records} detailLabel="Category" detailOf={(r) => r.category} shown={shown} />
+                                <ItemRows records={ch.records} group={group} shown={shown} isort={isort} onSort={sortItemsBy} />
                               </div>
                             )}
                           </div>
                         );
-                      }) : (
-                        <ItemRows records={g.records} detailLabel={detailLabel} detailOf={detailOf} shown={shown} flat />
-                      )}
+                      })}
                     </div>
                   )}
                 </div>
@@ -554,6 +626,8 @@ export default function ProjectsList() {
                 {cols.map((c) => renderTableCell(c, r))}
               </div>
             ))}
+
+            {isTree && treeRows}
 
             {!total && <div className="pv-empty">No projects match these filters.</div>}
           </div>
@@ -571,7 +645,6 @@ export default function ProjectsList() {
           </div>
         </div>
       </section>
-      </>)}
     </div>
   );
 }

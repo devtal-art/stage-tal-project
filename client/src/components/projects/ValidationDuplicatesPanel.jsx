@@ -50,8 +50,8 @@ function DuplicateTable({ rows, tone }) {
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r.rowNumber} className={`border-t ${borderClass}`}>
-            <td className="py-1 pr-3">{r.rowNumber}</td>
+          <tr key={`${r.sheet}|${r.rowNumber}`} className={`border-t ${borderClass}`}>
+            <td className="py-1 pr-3 whitespace-nowrap">{r.sheet ? `${r.sheet} · ` : ""}{r.rowNumber}</td>
             <td className="py-1 pr-3">{r.year}</td>
             <td className="py-1 pr-3">{r.brand}</td>
             <td className="py-1 pr-3">{r.category}</td>
@@ -108,8 +108,8 @@ export default function ValidationDuplicatesPanel({
             </thead>
             <tbody>
               {invalidRows.map((r) => (
-                <tr key={r.rowNumber} className="border-t border-amber-100">
-                  <td className="py-1 pr-3">{r.rowNumber}</td>
+                <tr key={`${r.sheet}|${r.rowNumber}`} className="border-t border-amber-100">
+                  <td className="py-1 pr-3 whitespace-nowrap">{r.sheet ? `${r.sheet} · ` : ""}{r.rowNumber}</td>
                   <td className="py-1 pr-3">{r.taskName || <span className="italic text-amber-400">(blank)</span>}</td>
                   <td className="py-1">{r.missingFields.join(', ')}</td>
                 </tr>
@@ -156,8 +156,8 @@ export default function ValidationDuplicatesPanel({
             </thead>
             <tbody>
               {unrecognizedStatusRows.map((r) => (
-                <tr key={r.rowNumber} className="border-t border-amber-100">
-                  <td className="py-1 pr-3">{r.rowNumber}</td>
+                <tr key={`${r.sheet}|${r.rowNumber}`} className="border-t border-amber-100">
+                  <td className="py-1 pr-3 whitespace-nowrap">{r.sheet ? `${r.sheet} · ` : ""}{r.rowNumber}</td>
                   <td className="py-1 pr-3">{r.taskName}</td>
                   <td className="py-1">{r.unrecognizedStatus}</td>
                 </tr>
@@ -182,8 +182,8 @@ export default function ValidationDuplicatesPanel({
             </thead>
             <tbody>
               {unrecognizedFrequencyRows.map((r) => (
-                <tr key={r.rowNumber} className="border-t border-amber-100">
-                  <td className="py-1 pr-3">{r.rowNumber}</td>
+                <tr key={`${r.sheet}|${r.rowNumber}`} className="border-t border-amber-100">
+                  <td className="py-1 pr-3 whitespace-nowrap">{r.sheet ? `${r.sheet} · ` : ""}{r.rowNumber}</td>
                   <td className="py-1 pr-3">{r.taskName}</td>
                   <td className="py-1">{r.unrecognizedFrequency}</td>
                 </tr>

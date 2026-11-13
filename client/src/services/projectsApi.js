@@ -31,6 +31,20 @@ export const uploadProjectsExcel = async (file) => {
   return response.data;
 };
 
+// The blank upload template (.xlsx with dropdowns), built by the server from
+// the saved brands/categories/departments. Saved through a temporary link.
+export const downloadProjectTemplate = async () => {
+  const response = await axios.get(`${API_URL}/template`, { responseType: 'blob' });
+  const url = URL.createObjectURL(response.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'TAL Project Report Template.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
 export const getProjects = async () => {
   const response = await axios.get(API_URL);
   return response.data;

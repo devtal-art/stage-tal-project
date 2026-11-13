@@ -14,7 +14,7 @@ import {
   LabelList,
 } from 'recharts';
 import { getUniqueSorted } from './dataUtils';
-import { getTagColor, getDepartmentColor, getStatusColor, getDistinctColorMap, STATUSES, NO_STATUS_LABEL } from './constants';
+import { getTagColor, getDepartmentColor, getStatusColor, getDistinctColorMap, STATUSES, NO_STATUS_LABEL, normalizeDepartment } from './constants';
 
 const GRIDLINE = '#e1e0d9';
 const AXIS_TEXT = '#898781';
@@ -142,7 +142,7 @@ export default function ProjectsCharts({ records }) {
   );
 
   const byDepartment = useMemo(() => {
-    const counts = buildCountsByKey(records, (r) => r.department || 'Unspecified');
+    const counts = buildCountsByKey(records, (r) => normalizeDepartment(r.department) || 'Unspecified');
     return groupTopN(counts, MAX_SLICES).sort((a, b) => b.value - a.value);
   }, [records]);
 
@@ -162,11 +162,11 @@ export default function ProjectsCharts({ records }) {
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <BarCard title="Projects by Month" data={byMonth} />
-      <BarCard title="Projects by Year" data={byYear} />
-      <PieCard title="Projects by Department" data={byDepartment} colorFn={getDepartmentColor} />
-      <PieCard title="Projects by Category" data={byCategory} colorFn={getTagColor} />
-      <PieCard title="Projects by Status" data={byStatus} colorFn={getStatusColor} />
+      <BarCard title="Work items by Month" data={byMonth} />
+      <BarCard title="Work items by Year" data={byYear} />
+      <PieCard title="Work items by Department" data={byDepartment} colorFn={getDepartmentColor} />
+      <PieCard title="Work items by Category" data={byCategory} colorFn={getTagColor} />
+      <PieCard title="Work items by Status" data={byStatus} colorFn={getStatusColor} />
     </div>
   );
 }

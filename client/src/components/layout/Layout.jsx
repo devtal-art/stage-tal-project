@@ -47,8 +47,8 @@ const NAV_GROUPS = [
     accent: 'green',
     items: [
       { name: 'Dashboard', href: '/projects', icon: LayoutDashboard },
-      { name: 'Upload Report', href: '/projects/upload', icon: Upload },
       { name: 'Projects', href: '/projects/all', icon: FolderKanban },
+      { name: 'Upload Report', href: '/projects/upload', icon: Upload },
     ],
   },
 ];

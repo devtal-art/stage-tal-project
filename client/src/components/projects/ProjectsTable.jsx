@@ -48,14 +48,26 @@ export default function ProjectsTable({ records, getRowFlags }) {
         },
       },
       { accessorKey: 'month', header: 'Month', sortingFn: monthSortingFn },
+      { accessorKey: 'weekNo', header: 'Week', sortingFn: 'alphanumeric', cell: (info) => info.getValue() || <span className="text-gray-400">—</span> },
+      // Saved field names: taskName = the project, description = the task.
       { accessorKey: 'taskName', header: 'Project Name', sortingFn: 'alphanumeric' },
+      {
+        accessorKey: 'description',
+        header: 'Task Name',
+        sortingFn: 'alphanumeric',
+        cell: (info) => {
+          const value = info.getValue();
+          if (!value) return <span className="italic text-gray-400 whitespace-nowrap">Task name not uploaded</span>;
+          return <span className="block max-w-[28rem] truncate" title={value}>{value}</span>;
+        },
+      },
       {
         accessorKey: 'status',
         header: 'Status',
         sortingFn: 'alphanumeric',
         cell: (info) => {
           const value = info.getValue();
-          if (!value) return <span className="text-gray-400">—</span>;
+          if (!value) return <span className="text-gray-400 whitespace-nowrap">No status</span>;
           return (
             <span className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" style={getStatusChipStyle(value)}>
               {value}
@@ -167,7 +179,7 @@ export default function ProjectsTable({ records, getRowFlags }) {
 
       <div className="flex flex-wrap items-center justify-between gap-2 pt-4">
         <span className="text-sm text-gray-500">
-          {records.length} project{records.length === 1 ? '' : 's'} total
+          {records.length} row{records.length === 1 ? '' : 's'} total
         </span>
         <div className="flex items-center space-x-2">
           <Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
