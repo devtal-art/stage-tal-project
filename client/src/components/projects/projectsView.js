@@ -150,18 +150,44 @@ export const buildGroups = (records, group, sort) => {
   return groups;
 };
 
+const isOn = (value) => value != null && value !== 'All';
+
 // Level 2 under an outer row, biggest first:
 //   Projects -> brand + category pair     Brand    -> project
 //   Category -> project                   Status   -> project (not split by brand)
-export const buildChildren = (outer, group) => {
-  const keyOf = group === 'task' ? (r) => `${r.brand}|${r.category}` : projectOf;
-  return bySize(groupBy(outer.records, keyOf)).map(([key, items]) => {
+//
+// Under Projects, a Brand / Category filter already fixes that part of the
+// pair, so it isn't repeated:
+//   Brand filter only     -> one row per category
+//   Category filter only  -> one row per brand
+//   both                  -> no level 2
+// and when a filter leaves just one such row, the tasks show directly.
+// Returns null when the outer row should open straight to its tasks.
+export const buildChildren = (outer, group, filters = {}) => {
+  let keyOf = projectOf;
+  let splitBy = null;
+  if (group === 'task') {
+    const brandOn = isOn(filters.brand);
+    const catOn = isOn(filters.category);
+    if (brandOn && catOn) return null;
+    splitBy = brandOn ? 'category' : catOn ? 'brand' : 'pair';
+    keyOf = splitBy === 'pair' ? (r) => `${r.brand}|${r.category}` : (r) => r[splitBy];
+  }
+  const entries = bySize(groupBy(outer.records, keyOf));
+  if (splitBy && splitBy !== 'pair' && entries.length === 1) return null;
+  return entries.map(([key, items]) => {
     // A-Z, so the subtitle doesn't depend on row order.
     const brands = uniq(items.map((r) => shortBrand(r.brand))).sort(byText).join(', ');
     const cats = uniq(items.map((r) => r.category)).sort(byText).join(', ');
     let title;
     let sub;
-    if (group === 'task') {
+    if (splitBy === 'category') {
+      title = items[0].category;
+      sub = '';
+    } else if (splitBy === 'brand') {
+      title = items[0].brand;
+      sub = '';
+    } else if (group === 'task') {
       title = items[0].brand;
       sub = items[0].category;
     } else {
@@ -204,11 +230,14 @@ export const sortItems = (records, isort) => {
   });
 };
 
-// Task-row columns per grouping.
-export const itemColumnsFor = (group) => {
-  if (group === 'status') return ['week', 'task', 'brand', 'category', 'dept', 'month', 'status', 'link'];
-  if (group === 'category') return ['week', 'task', 'brand', 'dept', 'month', 'status', 'link'];
-  return ['week', 'task', 'category', 'dept', 'month', 'status', 'link'];
+// Task-row columns per grouping. A Brand / Category column is left out
+// while that filter is on - every row would show the same value.
+export const itemColumnsFor = (group, filters = {}) => {
+  let cols;
+  if (group === 'status') cols = ['week', 'task', 'brand', 'category', 'dept', 'month', 'status', 'link'];
+  else if (group === 'category') cols = ['week', 'task', 'brand', 'dept', 'month', 'status', 'link'];
+  else cols = ['week', 'task', 'category', 'dept', 'month', 'status', 'link'];
+  return cols.filter((c) => !(c === 'brand' && isOn(filters.brand)) && !(c === 'category' && isOn(filters.category)));
 };
 
 // "All items" table order.

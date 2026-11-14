@@ -143,8 +143,8 @@ function SortHead({ col, sort, onSort, className }) {
 }
 
 // Task rows (the leaf level of every grouping) + their sortable header.
-function ItemRows({ records, group, shown, isort, onSort }) {
-  const cols = itemColumnsFor(group)
+function ItemRows({ records, group, filters, shown, isort, onSort }) {
+  const cols = itemColumnsFor(group, filters)
     .filter((id) => !ITEM_COLS[id].pref || shown(ITEM_COLS[id].pref))
     .map((id) => ({ id, ...ITEM_COLS[id] }));
   const template = cols.map((c) => c.w).join(' ');
@@ -289,7 +289,7 @@ export default function ProjectsList() {
     const o = {};
     groups.slice(0, limit).forEach((g) => {
       o[g.key] = true;
-      buildChildren(g, group).forEach((ch) => { o[ch.key] = true; });
+      (buildChildren(g, group, filters) || []).forEach((ch) => { o[ch.key] = true; });
     });
     setOpen(o);
   };
@@ -583,9 +583,19 @@ export default function ProjectsList() {
                   >
                     {cols.map((c) => renderGroupCell(c, g, isOpen))}
                   </div>
-                  {isOpen && (
+                  {isOpen && (() => {
+                    const children = buildChildren(g, group, filters);
+                    // The Brand / Category filters leave nothing to split by: tasks directly.
+                    if (!children) {
+                      return (
+                        <div className="pv-open pv-open-direct">
+                          <ItemRows records={g.records} group={group} filters={filters} shown={shown} isort={isort} onSort={sortItemsBy} />
+                        </div>
+                      );
+                    }
+                    return (
                     <div className="pv-open">
-                      {buildChildren(g, group).map((ch) => {
+                      {children.map((ch) => {
                         const childOpen = !!open[ch.key];
                         return (
                           <div key={ch.key} className="pv-child">
@@ -601,7 +611,7 @@ export default function ProjectsList() {
                               <span className={`pv-caret${childOpen ? ' is-open' : ''}`} style={{ fontSize: 11 }}>▶</span>
                               <div style={{ minWidth: 0 }}>
                                 <div className="pv-child-name">{ch.title}</div>
-                                <div className="pv-child-sub">{ch.sub}</div>
+                                {ch.sub && <div className="pv-child-sub">{ch.sub}</div>}
                               </div>
                               {shown('g_period') && <div className="pv-cell pv-child-period">{ch.period}<small>{ch.frequencyText}</small></div>}
                               {shown('g_progress') && <ProgressBar small segments={ch.segments} text={ch.statusText} />}
@@ -609,14 +619,15 @@ export default function ProjectsList() {
                             </div>
                             {childOpen && (
                               <div className="pv-child-items">
-                                <ItemRows records={ch.records} group={group} shown={shown} isort={isort} onSort={sortItemsBy} />
+                                <ItemRows records={ch.records} group={group} filters={filters} shown={shown} isort={isort} onSort={sortItemsBy} />
                               </div>
                             )}
                           </div>
                         );
                       })}
                     </div>
-                  )}
+                    );
+                  })()}
                 </div>
               );
             })}

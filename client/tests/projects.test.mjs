@@ -160,3 +160,35 @@ test('old links: department spelling from the sheet is read in canonical form', 
   assert.equal(validateProjectFilters({ ...DEFAULT_FILTERS, department: 'All' }).department, 'All');
   assert.equal('department' in validateProjectFilters({ status: 'All', quarter: 'All' }), false);
 });
+
+test('Projects level 2 with Brand / Category filters on: no repeated info', () => {
+  const web = (f) => buildGroups(filterRecords(DATA, { ...DEFAULT_FILTERS, ...f }), 'task', SORT).find((g) => g.name === 'Website Work');
+  // No filter: brand + category pairs (unchanged).
+  assert.equal(buildChildren(web({}), 'task', DEFAULT_FILTERS).length, 3);
+  // Brand filter: split by category only; title is the category, no subtitle.
+  const brandF = { ...DEFAULT_FILTERS, brand: '2 - WA' };
+  const byCat = buildChildren(web(brandF), 'task', brandF);
+  assert.deepEqual(byCat.map((c) => `${c.title}|${c.sub}`), ['Miscellaneous|', 'Website|']);
+  // Brand filter, project with a single category -> tasks directly.
+  const ivy = { ...DEFAULT_FILTERS, brand: '2 - Ivy Ana' };
+  assert.equal(buildChildren(web(ivy), 'task', ivy), null);
+  // Category filter: split by brand; one brand -> tasks directly.
+  const catF = { ...DEFAULT_FILTERS, category: 'Website' };
+  assert.deepEqual(buildChildren(web(catF), 'task', catF).map((c) => c.title), ['2 - Ivy Ana', '2 - WA']);
+  const misc = { ...DEFAULT_FILTERS, category: 'Miscellaneous' };
+  assert.equal(buildChildren(web(misc), 'task', misc), null);
+  // Both filters -> tasks directly.
+  const both = { ...DEFAULT_FILTERS, brand: '2 - WA', category: 'Website' };
+  assert.equal(buildChildren(web(both), 'task', both), null);
+  // Other groupings keep their level 2 (project) whatever the filters.
+  const brandGroup = buildGroups(filterRecords(DATA, brandF), 'brand', SORT)[0];
+  assert.deepEqual(buildChildren(brandGroup, 'brand', brandF).map((c) => c.title), ['Website Work']);
+});
+
+test('task columns drop Brand / Category while that filter is on', () => {
+  assert.deepEqual(itemColumnsFor('task', { category: 'Website' }), ['week', 'task', 'dept', 'month', 'status', 'link']);
+  assert.deepEqual(itemColumnsFor('task', { brand: '2 - WA' }), ['week', 'task', 'category', 'dept', 'month', 'status', 'link']);
+  assert.deepEqual(itemColumnsFor('category', { brand: '2 - WA' }), ['week', 'task', 'dept', 'month', 'status', 'link']);
+  assert.deepEqual(itemColumnsFor('status', { brand: '2 - WA', category: 'All' }), ['week', 'task', 'category', 'dept', 'month', 'status', 'link']);
+  assert.deepEqual(itemColumnsFor('status', { brand: 'All', category: 'All' }), itemColumnsFor('status'));
+});
