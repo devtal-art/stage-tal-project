@@ -31,7 +31,7 @@ async function main() {
   const user = await User.findOneAndUpdate(
     { username: username.toLowerCase() },
     { $set: { passwordHash, role, active: true, ...(name ? { name } : {}) } },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 
   console.log(`✅ User "${user.username}" saved (role: ${user.role}).`);
