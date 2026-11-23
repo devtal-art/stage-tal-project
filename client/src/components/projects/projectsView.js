@@ -10,7 +10,7 @@ import { monthIndex, NO_STATUS_LABEL, normalizeDepartment, getFullMonthName } fr
 
 export const projectOf = (r) => String(r.taskName ?? '').trim();
 export const taskOf = (r) => String(r.description ?? '').trim();
-export const TASK_MISSING = 'Task name not uploaded';
+export const TASK_MISSING = 'Task name not uploaded'; 
 
 // Display order of the status chips, progress-bar segments and the Status
 // sort (workflow order).

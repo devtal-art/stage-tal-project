@@ -5,7 +5,7 @@ import { previewProjectsExcel, uploadProjectsExcel, downloadProjectTemplate } fr
 import { Button } from '../../components/ui/button';
 import ProjectsSummaryCards from '../../components/projects/ProjectsSummaryCards';
 import HierarchyTree from '../../components/projects/HierarchyTree';
-import ProjectsTable from '../../components/projects/ProjectsTable';
+import ProjectsTable from '../../components/projects/ProjectsTable'; 
 import ValidationDuplicatesPanel from '../../components/projects/ValidationDuplicatesPanel';
 import UploadSummary from '../../components/projects/UploadSummary';
 import { useNavigate } from 'react-router-dom';

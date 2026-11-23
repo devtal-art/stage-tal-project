@@ -9,7 +9,7 @@ function Option({ label, checked, disabled, onChange }) {
       <input
         type="checkbox"
         className="peer sr-only"
-        checked={checked}
+        checked={checked} 
         disabled={disabled}
         onChange={onChange}
       />

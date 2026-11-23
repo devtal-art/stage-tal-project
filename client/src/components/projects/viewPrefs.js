@@ -6,7 +6,7 @@ import { useCallback, useState } from 'react';
 // is locked on wherever it appears: a row with no name can't be identified.
 // Search is left out on purpose - it's the one control that's always there.
 export const FILTER_FIELDS = [
-  { id: 'year', label: 'Year' },
+  { id: 'year', label: 'Year' }, 
   { id: 'quarter', label: 'Quarter' },
   { id: 'month', label: 'Month' },
   { id: 'week', label: 'Week' },
