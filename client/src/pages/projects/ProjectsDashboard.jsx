@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FolderKanban, Upload as UploadIcon } from 'lucide-react';
-import { getProjects } from '../../services/projectsApi';
-import { Button } from '../../components/ui/button'; 
+import { getProjects } from '../../services/projectsApi'; 
+import { Button } from '../../components/ui/button';
 import ProjectsSummaryCards from '../../components/projects/ProjectsSummaryCards';
 import ProjectsCharts from '../../components/projects/ProjectsCharts';
 import ProjectsFilters from '../../components/projects/ProjectsFilters';
