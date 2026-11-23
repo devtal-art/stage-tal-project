@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Settings2 } from 'lucide-react';
 import { Button } from '../ui/button';
-import { VIEW_SECTIONS, FILTER_FIELDS } from './viewPrefs';
+import { VIEW_SECTIONS, FILTER_FIELDS, VIEW_GROUP_OPTIONS } from './viewPrefs';
 
 function Option({ label, checked, disabled, onChange }) {
   return (
@@ -166,7 +166,31 @@ export default function CustomizeViewMenu({ view, prefs, onToggle, onReset, onMo
                 );
               })}
             </div>
-            <div>
+            <div className="space-y-4">
+              {VIEW_GROUP_OPTIONS[view] && (() => {
+                const options = VIEW_GROUP_OPTIONS[view];
+                const hiddenGroups = prefs.hiddenGroups || [];
+                const shownCount = options.filter((g) => !hiddenGroups.includes(g.id)).length;
+                return (
+                  <div>
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Group by options</p>
+                    {options.map((g) => {
+                      const checked = !hiddenGroups.includes(g.id);
+                      return (
+                        <Option
+                          key={g.id}
+                          label={g.label}
+                          checked={checked}
+                          // The last one shown stays on: Group by can't be empty.
+                          disabled={checked && shownCount <= 1}
+                          onChange={() => onToggle('hiddenGroups', g.id)}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+              <div>
               <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Filters</p>
               {FILTER_FIELDS.map((f) => (
                 <Option
@@ -176,6 +200,7 @@ export default function CustomizeViewMenu({ view, prefs, onToggle, onReset, onMo
                   onChange={() => onToggle('hiddenFilters', f.id)}
                 />
               ))}
+              </div>
             </div>
           </div>
 

@@ -120,7 +120,7 @@ export const buildGroups = (records, group, sort) => {
     const projects = uniq(items.map(projectOf));
     let sub;
     if (group === 'task') sub = `${plural(brands.length, 'brand', 'brands')} · ${plural(cats.length, 'category', 'categories')}`;
-    else if (group === 'brand') sub = `${plural(cats.length, 'category', 'categories')} · ${plural(projects.length, 'project', 'projects')}`;
+    else if (group === 'brand') sub = `${plural(projects.length, 'project', 'projects')} · ${plural(cats.length, 'category', 'categories')}`;
     else if (group === 'category') sub = `${plural(brands.length, 'brand', 'brands')} · ${plural(projects.length, 'project', 'projects')}`;
     else sub = `${plural(brands.length, 'brand', 'brands')} · ${plural(cats.length, 'category', 'categories')}`;
     const period = periodOf(items);

@@ -22,7 +22,7 @@ export const VIEW_SECTIONS = {
   // section so the same field can be toggled separately in each place.
   list: [
     {
-      title: 'Group row columns',
+      title: 'Data columns',
       items: [
         { id: 'g_name', label: 'Name', locked: true },
         { id: 'g_category', label: 'Category (Projects / Brand)' },
@@ -34,7 +34,7 @@ export const VIEW_SECTIONS = {
     },
     {
       // Also the details on Hierarchy's task rows (week, dept, status, link).
-      title: 'Task row columns',
+      title: 'Expand View',
       items: [
         { id: 'i_week', label: 'Week' },
         { id: 'i_task', label: 'Task', locked: true },
@@ -121,9 +121,23 @@ export const VIEW_SECTIONS = {
   ],
 };
 
+// "Group by" buttons each view can switch off (ids match projectsView's
+// GROUPS). At least one always stays on, so the switcher is never empty.
+export const VIEW_GROUP_OPTIONS = {
+  list: [
+    { id: 'task', label: 'Projects' },
+    { id: 'brand', label: 'Brand' },
+    { id: 'category', label: 'Category' },
+    { id: 'status', label: 'Status' },
+    { id: 'items', label: 'All items' },
+    { id: 'tree', label: 'Hierarchy' },
+  ],
+};
+const groupIds = (view) => (VIEW_GROUP_OPTIONS[view] || []).map((g) => g.id);
+
 const VIEWS = Object.keys(VIEW_SECTIONS);
 const STORAGE_KEY = 'tal.projects.customizeView';
-const EMPTY = { hiddenColumns: [], hiddenFilters: [], columnOrder: [], detailOrder: [], wideColumns: [] };
+const EMPTY = { hiddenColumns: [], hiddenFilters: [], hiddenGroups: [], columnOrder: [], detailOrder: [], wideColumns: [] };
 
 // Table and Compact let the user choose the order of their (first-section)
 // columns. Compact's Project Name is pinned as column 1 and can't move.
@@ -154,9 +168,16 @@ const sanitizeOrder = (ids, raw, first) => {
   return first ? [first, ...order.filter((id) => id !== first)] : order;
 };
 
+// Hiding every group option is not allowed; such a value falls back to none hidden.
+const sanitizeGroups = (view, raw) => {
+  const hidden = pick(raw, groupIds(view));
+  return hidden.length >= groupIds(view).length ? [] : hidden;
+};
+
 const sanitizeView = (view, raw) => ({
   hiddenColumns: pick(raw?.hiddenColumns, hideable(view)),
   hiddenFilters: pick(raw?.hiddenFilters, FILTER_FIELDS.map((f) => f.id)),
+  hiddenGroups: sanitizeGroups(view, raw?.hiddenGroups),
   columnOrder: sanitizeOrder(orderableIds(view), raw?.columnOrder, FIRST_COLUMN[view]),
   detailOrder: sanitizeOrder(detailIds(view), raw?.detailOrder, FIRST_DETAIL_COLUMN[view]),
   wideColumns: pick(raw?.wideColumns, detailIds(view)),

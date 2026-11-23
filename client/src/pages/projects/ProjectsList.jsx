@@ -50,7 +50,7 @@ const FILTER_DEFS = [
   { id: 'year', all: 'All years', options: 'years', sort: (a) => a.slice().sort((x, y) => Number(y) - Number(x)) },
   { id: 'quarter', all: 'All quarters', options: 'quarters' },
   { id: 'month', all: 'All months', options: 'months' },
-  { id: 'week', all: 'All weeks', options: 'weeks', label: (o) => `Week ${o}` },
+  { id: 'week', all: 'All weeks', options: 'weeks', sort: (a) => a.slice().reverse(), label: (o) => `Week ${o}` },
   { id: 'brand', all: 'All brands', options: 'brands' },
   { id: 'category', all: 'All categories', options: 'categories' },
   { id: 'department', all: 'All departments', options: 'departments' },
@@ -272,6 +272,14 @@ export default function ProjectsList() {
     setOpen({});
     setSort(defaultSort(id));
   };
+  // Group by options switched off in Customize view. If the current grouping
+  // is one of them, move to the first option still shown.
+  const hiddenGroups = prefs.hiddenGroups || [];
+  const visibleGroups = GROUPS.filter((g) => !hiddenGroups.includes(g.id));
+  useEffect(() => {
+    if (visibleGroups.length > 0 && !visibleGroups.some((g) => g.id === group)) pickGroup(visibleGroups[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenGroups, group]);
   const toggleOpen = (key) => setOpen((o) => ({ ...o, [key]: !o[key] }));
   const toggleTree = (key) => setTreeOpen({ ...treeOpenNow, [key]: !treeOpenNow[key] });
   const sortBy = (key) => {
@@ -542,7 +550,7 @@ export default function ProjectsList() {
         <div className="pv-row" style={{ gap: 10 }}>
           <span className="pv-seg-label">Group by</span>
           <div className="pv-seg" role="group" aria-label="Group by">
-            {GROUPS.map((g) => (
+            {visibleGroups.map((g) => (
               <button key={g.id} type="button" aria-pressed={group === g.id} className={group === g.id ? 'is-on' : ''} onClick={() => pickGroup(g.id)}>
                 {g.label}
               </button>
